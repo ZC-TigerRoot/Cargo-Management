@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { X } from "lucide-react";
-import type { BusinessType, VehicleFormValues, VehicleRecord } from "@/lib/domain";
+import { vehicleStatuses, type BusinessType, type VehicleFormValues, type VehicleRecord, type VehicleStatus } from "@/lib/domain";
 
 type Props = {
   defaultType?: BusinessType;
@@ -19,6 +19,7 @@ const localDateTime = (value?: string) => {
 
 export default function VehicleFormModal({ defaultType = "overseas", initial, onClose, onSaved }: Props) {
   const [type, setType] = useState<BusinessType>(initial?.type ?? defaultType);
+  const [status, setStatus] = useState<VehicleStatus>(initial?.status ?? "待入库");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
@@ -62,7 +63,12 @@ export default function VehicleFormModal({ defaultType = "overseas", initial, on
       const response = await fetch("/api/v1/vehicles", {
         method: initial ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(initial ? { id: initial.id, ...payload } : { ...payload, idempotencyKey: crypto.randomUUID() }),
+        body: JSON.stringify(initial ? {
+          id: initial.id,
+          ...payload,
+          status,
+          statusReason: status !== initial.status ? text("statusReason") : undefined,
+        } : { ...payload, idempotencyKey: crypto.randomUUID() }),
       });
       const result = await response.json();
       if (!response.ok) {
@@ -89,6 +95,14 @@ export default function VehicleFormModal({ defaultType = "overseas", initial, on
         <button type="button" onClick={onClose} aria-label="关闭"><X /></button>
       </div>
       <form action={submit}>
+        {initial && <fieldset className={`form-section status-editor${status === "异常" ? " status-editor-alert" : ""}`}>
+          <legend>当前车辆状态</legend>
+          <div className="form-grid">
+            <label>状态<select name="status" value={status} onChange={event => setStatus(event.target.value as VehicleStatus)}>{vehicleStatuses.map(item => <option value={item} key={item}>{item}</option>)}</select></label>
+            <label>状态变更说明<input name="statusReason" required={status !== initial.status} disabled={status === initial.status} placeholder={status === initial.status ? "状态未变化" : "请填写本次变更原因"} /></label>
+          </div>
+          <p className="status-help">状态变更将立即反映在车辆台账，并追加一条不可覆盖的业务事件。</p>
+        </fieldset>}
         <fieldset className="form-section">
           <legend>车辆与批次</legend>
           <div className="form-grid">

@@ -1,6 +1,7 @@
 export type Role = "warehouse" | "operator" | "viewer" | "admin";
 export type BusinessType = "overseas" | "domestic";
-export type VehicleStatus = "待入库" | "在库" | "待放车" | "待提货" | "已出库" | "待签收" | "已完成" | "异常";
+export const vehicleStatuses = ["待入库", "在库", "待放车", "待提货", "已出库", "待签收", "已完成", "异常"] as const;
+export type VehicleStatus = typeof vehicleStatuses[number];
 
 export type VehicleRecord = {
   id: string;

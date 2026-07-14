@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { vehicleStatuses } from "./domain";
 
 const optionalText = z.string().trim().optional().transform(value => value || undefined);
 const optionalDateTime = z.iso.datetime({ offset: true }).optional();
@@ -39,7 +40,11 @@ export const vehiclePayload = z.object({
 });
 
 export const vehicleInput = vehiclePayload.and(z.object({ idempotencyKey: z.string().min(8) }));
-export const vehicleUpdateInput = vehiclePayload.and(z.object({ id: z.string().min(1) }));
+export const vehicleUpdateInput = vehiclePayload.and(z.object({
+  id: z.string().min(1),
+  status: z.enum(vehicleStatuses).optional(),
+  statusReason: optionalText,
+}));
 
 export const driverSubmission = z.object({
   name: z.string().trim().min(2), phone: z.string().trim().min(6), plateNo: z.string().trim().min(2),

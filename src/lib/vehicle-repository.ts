@@ -1,8 +1,8 @@
-import { EventType, type Prisma } from "@prisma/client";
-import type { VehicleRecord, VehicleStatus } from "./domain";
+import { EventType, VehicleStatus as PrismaVehicleStatus, type Prisma } from "@prisma/client";
+import type { VehicleRecord, VehicleStatus as DomainVehicleStatus } from "./domain";
 import { prisma } from "./prisma";
 import type { z } from "zod";
-import type { vehiclePayload } from "./validators";
+import type { vehiclePayload, vehicleUpdateInput } from "./validators";
 
 export const vehicleInclude = {
   batch: true,
@@ -13,6 +13,7 @@ export const vehicleInclude = {
 
 export type VehicleWithRelations = Prisma.VehicleGetPayload<{ include: typeof vehicleInclude }>;
 export type VehiclePayload = z.infer<typeof vehiclePayload>;
+export type VehicleUpdatePayload = Omit<z.infer<typeof vehicleUpdateInput>, "id">;
 
 const eventFieldMap = {
   merchantReleaseAt: "MERCHANT_RELEASE",
@@ -23,7 +24,7 @@ const eventFieldMap = {
   agentReceiptDeliveredAt: "AGENT_RECEIPT_DELIVERED",
 } as const satisfies Record<string, EventType>;
 
-const statusNames: Record<string, VehicleStatus> = {
+const statusNames: Record<PrismaVehicleStatus, DomainVehicleStatus> = {
   PENDING_INBOUND: "待入库",
   IN_STOCK: "在库",
   PENDING_RELEASE: "待放车",
@@ -32,6 +33,17 @@ const statusNames: Record<string, VehicleStatus> = {
   PENDING_RECEIPT: "待签收",
   COMPLETED: "已完成",
   EXCEPTION: "异常",
+};
+
+const statusCodes: Record<DomainVehicleStatus, PrismaVehicleStatus> = {
+  "待入库": "PENDING_INBOUND",
+  "在库": "IN_STOCK",
+  "待放车": "PENDING_RELEASE",
+  "待提货": "PENDING_PICKUP",
+  "已出库": "OUTBOUND",
+  "待签收": "PENDING_RECEIPT",
+  "已完成": "COMPLETED",
+  "异常": "EXCEPTION",
 };
 
 const eventAt = (vehicle: VehicleWithRelations, type: string) =>
@@ -70,7 +82,7 @@ export function toVehicleRecord(vehicle: VehicleWithRelations): VehicleRecord {
   };
 }
 
-function prismaStatus(data: VehiclePayload) {
+function prismaStatus(data: VehiclePayload): PrismaVehicleStatus {
   if (data.agentReceiptDeliveredAt || data.customerReceiptDeliveredAt) return "COMPLETED" as const;
   if (data.outboundAt) return "PENDING_RECEIPT" as const;
   if (data.customerReleaseAt || data.pickupDetails) return "PENDING_PICKUP" as const;
@@ -158,10 +170,11 @@ export async function createVehicle(data: VehiclePayload, idempotencyKey: string
   });
 }
 
-export async function updateVehicle(id: string, data: VehiclePayload) {
+export async function updateVehicle(id: string, data: VehicleUpdatePayload) {
   return prisma.$transaction(async tx => {
     const existing = await tx.vehicle.findUniqueOrThrow({ where: { id }, include: { events: true } });
     const { batch, customer, warehouse } = await upsertRelations(tx, data);
+    const nextStatus = data.status ? statusCodes[data.status] : prismaStatus(data);
     await tx.vehicle.update({
       where: { id },
       data: {
@@ -169,7 +182,7 @@ export async function updateVehicle(id: string, data: VehiclePayload) {
         model: data.model,
         brand: data.brand ?? null,
         hsCode: data.hsCode ?? null,
-        status: prismaStatus(data),
+        status: nextStatus,
         inboundAt: data.inboundAt ? new Date(data.inboundAt) : null,
         outboundAt: data.outboundAt ? new Date(data.outboundAt) : null,
         pickupDetails: data.pickupDetails ?? null,
@@ -192,6 +205,21 @@ export async function updateVehicle(id: string, data: VehiclePayload) {
     if (changedEvents.length) {
       await tx.inventoryEvent.createMany({
         data: changedEvents.map(event => ({ ...event, vehicleId: id, payload: { source: "record-edit" } })),
+      });
+    }
+    if (existing.status !== nextStatus) {
+      await tx.inventoryEvent.create({
+        data: {
+          vehicleId: id,
+          type: nextStatus === "EXCEPTION" ? "EXCEPTION" : "CORRECTION",
+          occurredAt: new Date(),
+          payload: {
+            source: "status-edit",
+            from: statusNames[existing.status],
+            to: statusNames[nextStatus],
+            reason: data.statusReason ?? null,
+          },
+        },
       });
     }
     return tx.vehicle.findUniqueOrThrow({ where: { id }, include: vehicleInclude });
