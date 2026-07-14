@@ -1,5 +1,6 @@
 import { EventType, VehicleStatus as PrismaVehicleStatus, type Prisma } from "@prisma/client";
-import type { VehicleRecord, VehicleStatus as DomainVehicleStatus } from "./domain";
+import type { VehicleEventRecord, VehicleRecord, VehicleStatus as DomainVehicleStatus } from "./domain";
+import { defaultWarehouseTimezone } from "./datetime";
 import { prisma } from "./prisma";
 import type { z } from "zod";
 import type { vehiclePayload, vehicleUpdateInput } from "./validators";
@@ -8,21 +9,50 @@ export const vehicleInclude = {
   batch: true,
   customer: true,
   warehouse: true,
-  events: { orderBy: { occurredAt: "asc" as const } },
+  events: {
+    orderBy: { createdAt: "asc" as const },
+    include: { actor: { select: { name: true } } },
+  },
 } satisfies Prisma.VehicleInclude;
 
 export type VehicleWithRelations = Prisma.VehicleGetPayload<{ include: typeof vehicleInclude }>;
 export type VehiclePayload = z.infer<typeof vehiclePayload>;
-export type VehicleUpdatePayload = Omit<z.infer<typeof vehicleUpdateInput>, "id">;
+export type VehicleUpdatePayload = Omit<z.infer<typeof vehicleUpdateInput>, "id" | "version">;
+export type MutationContext = { actorId?: string; ip?: string };
+
+export class VersionConflictError extends Error {
+  constructor() {
+    super("车辆记录已被其他用户更新，请刷新后重试");
+  }
+}
 
 const eventFieldMap = {
+  inboundAt: "INBOUND",
   merchantReleaseAt: "MERCHANT_RELEASE",
   transferDocNoticeAt: "TRANSFER_DOC_NOTICE",
   customerReleaseAt: "CUSTOMER_RELEASE",
+  outboundAt: "OUTBOUND",
   outboundNoticeDeliveredAt: "OUTBOUND_NOTICE_DELIVERED",
   customerReceiptDeliveredAt: "CUSTOMER_RECEIPT_DELIVERED",
   agentReceiptDeliveredAt: "AGENT_RECEIPT_DELIVERED",
 } as const satisfies Record<string, EventType>;
+
+const eventTitles: Record<EventType, string> = {
+  CREATED: "创建车辆档案",
+  INBOUND: "车辆入库",
+  MERCHANT_RELEASE: "商社通知放车",
+  TRANSFER_DOC_NOTICE: "客户通知做过户文件",
+  CUSTOMER_RELEASE: "客户通知放车",
+  PICKUP_CREATED: "创建提货任务",
+  OUTBOUND: "车辆实际出库",
+  DRIVER_SIGNED: "司机完成签收",
+  RECEIPT_DELIVERED: "签收单已交付",
+  OUTBOUND_NOTICE_DELIVERED: "出库通知单交付商社",
+  CUSTOMER_RECEIPT_DELIVERED: "客户交付签收单",
+  AGENT_RECEIPT_DELIVERED: "外代交付签收单给商社",
+  CORRECTION: "资料更正",
+  EXCEPTION: "标记异常",
+};
 
 const statusNames: Record<PrismaVehicleStatus, DomainVehicleStatus> = {
   PENDING_INBOUND: "待入库",
@@ -46,16 +76,57 @@ const statusCodes: Record<DomainVehicleStatus, PrismaVehicleStatus> = {
   "异常": "EXCEPTION",
 };
 
-const eventAt = (vehicle: VehicleWithRelations, type: string) =>
-  [...vehicle.events].reverse().find(event => event.type === type)?.occurredAt.toISOString();
+function jsonObject(value: Prisma.JsonValue | undefined) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, Prisma.JsonValue> : {};
+}
+
+function eventPayload(event: VehicleWithRelations["events"][number]) {
+  return jsonObject(event.payload);
+}
+
+function effectiveEventAt(vehicle: VehicleWithRelations, field: keyof typeof eventFieldMap) {
+  const type = eventFieldMap[field];
+  let value: string | undefined;
+  for (const event of vehicle.events) {
+    if (event.type === type) value = event.occurredAt.toISOString();
+    if (event.type === "CORRECTION") {
+      const payload = eventPayload(event);
+      if (payload.field === field && payload.eventType === type && payload.value === null) value = undefined;
+    }
+  }
+  return value;
+}
+
+function eventHistory(vehicle: VehicleWithRelations): VehicleEventRecord[] {
+  return vehicle.events.map(event => {
+    const payload = eventPayload(event);
+    const correctedType = typeof payload.eventType === "string" && payload.eventType in eventTitles
+      ? payload.eventType as EventType
+      : undefined;
+    const cleared = event.type === "CORRECTION" && payload.value === null && correctedType;
+    return {
+      id: event.id,
+      type: event.type,
+      title: cleared ? `撤销：${eventTitles[correctedType]}` : eventTitles[event.type],
+      occurredAt: event.occurredAt.toISOString(),
+      recordedAt: event.createdAt.toISOString(),
+      actor: event.actor?.name,
+      correctionOfId: event.correctionOfId ?? undefined,
+      reason: typeof payload.reason === "string" ? payload.reason : cleared ? "清空错误的业务时间" : undefined,
+    };
+  });
+}
 
 export function toVehicleRecord(vehicle: VehicleWithRelations): VehicleRecord {
+  const type = vehicle.batch?.type === "DOMESTIC" ? "domestic" : "overseas";
+  const extra = jsonObject(vehicle.extra);
   return {
     id: vehicle.id,
+    version: vehicle.version,
     vin: vehicle.vin,
     model: vehicle.model,
     brand: vehicle.brand ?? undefined,
-    type: vehicle.batch?.type === "DOMESTIC" ? "domestic" : "overseas",
+    type,
     referenceNo: vehicle.batch?.referenceNo ?? "",
     hsCode: vehicle.hsCode ?? undefined,
     portOfLoad: vehicle.batch?.portOfLoad ?? undefined,
@@ -66,29 +137,31 @@ export function toVehicleRecord(vehicle: VehicleWithRelations): VehicleRecord {
     manufacturer: vehicle.batch?.manufacturer ?? undefined,
     warehouseLocation: vehicle.warehouse?.location ?? "",
     warehouse: vehicle.warehouse?.name ?? "",
+    warehouseTimezone: typeof extra.warehouseTimezone === "string" ? extra.warehouseTimezone : defaultWarehouseTimezone(type),
     customer: vehicle.customer?.name ?? "",
     status: statusNames[vehicle.status] ?? "待入库",
     inboundAt: vehicle.inboundAt?.toISOString(),
-    merchantReleaseAt: eventAt(vehicle, "MERCHANT_RELEASE"),
-    transferDocNoticeAt: eventAt(vehicle, "TRANSFER_DOC_NOTICE"),
-    customerReleaseAt: eventAt(vehicle, "CUSTOMER_RELEASE"),
+    merchantReleaseAt: effectiveEventAt(vehicle, "merchantReleaseAt"),
+    transferDocNoticeAt: effectiveEventAt(vehicle, "transferDocNoticeAt"),
+    customerReleaseAt: effectiveEventAt(vehicle, "customerReleaseAt"),
     pickupDetails: vehicle.pickupDetails ?? undefined,
     outboundAt: vehicle.outboundAt?.toISOString(),
-    outboundNoticeDeliveredAt: eventAt(vehicle, "OUTBOUND_NOTICE_DELIVERED"),
-    customerReceiptDeliveredAt: eventAt(vehicle, "CUSTOMER_RECEIPT_DELIVERED"),
-    agentReceiptDeliveredAt: eventAt(vehicle, "AGENT_RECEIPT_DELIVERED"),
+    outboundNoticeDeliveredAt: effectiveEventAt(vehicle, "outboundNoticeDeliveredAt"),
+    customerReceiptDeliveredAt: effectiveEventAt(vehicle, "customerReceiptDeliveredAt"),
+    agentReceiptDeliveredAt: effectiveEventAt(vehicle, "agentReceiptDeliveredAt"),
     updatedAt: vehicle.updatedAt.toISOString(),
     notes: vehicle.notes ?? undefined,
+    history: eventHistory(vehicle),
   };
 }
 
 function prismaStatus(data: VehiclePayload): PrismaVehicleStatus {
-  if (data.agentReceiptDeliveredAt || data.customerReceiptDeliveredAt) return "COMPLETED" as const;
-  if (data.outboundAt) return "PENDING_RECEIPT" as const;
-  if (data.customerReleaseAt || data.pickupDetails) return "PENDING_PICKUP" as const;
-  if (data.merchantReleaseAt) return "PENDING_RELEASE" as const;
-  if (data.inboundAt) return "IN_STOCK" as const;
-  return "PENDING_INBOUND" as const;
+  if (data.agentReceiptDeliveredAt || data.customerReceiptDeliveredAt) return "COMPLETED";
+  if (data.outboundAt) return "PENDING_RECEIPT";
+  if (data.customerReleaseAt || data.pickupDetails) return "PENDING_PICKUP";
+  if (data.merchantReleaseAt) return "PENDING_RELEASE";
+  if (data.inboundAt) return "IN_STOCK";
+  return "PENDING_INBOUND";
 }
 
 async function upsertRelations(tx: Prisma.TransactionClient, data: VehiclePayload) {
@@ -107,12 +180,12 @@ async function upsertRelations(tx: Prisma.TransactionClient, data: VehiclePayloa
         manufacturer: data.manufacturer,
       },
       update: {
-        portOfLoad: data.portOfLoad,
-        portOfDischarge: data.portOfDischarge,
-        vesselVoyage: data.vesselVoyage,
-        etd: data.etd ? new Date(data.etd) : undefined,
-        eta: data.eta ? new Date(data.eta) : undefined,
-        manufacturer: data.manufacturer,
+        portOfLoad: data.portOfLoad ?? null,
+        portOfDischarge: data.portOfDischarge ?? null,
+        vesselVoyage: data.vesselVoyage ?? null,
+        etd: data.etd ? new Date(data.etd) : null,
+        eta: data.eta ? new Date(data.eta) : null,
+        manufacturer: data.manufacturer ?? null,
       },
     }),
     tx.customer.upsert({ where: { name: data.customer }, create: { name: data.customer }, update: {} }),
@@ -125,18 +198,18 @@ async function upsertRelations(tx: Prisma.TransactionClient, data: VehiclePayloa
   return { batch, customer, warehouse };
 }
 
-function datedEvents(data: VehiclePayload) {
-  const events: { type: EventType; occurredAt: Date }[] = [];
-  if (data.inboundAt) events.push({ type: "INBOUND", occurredAt: new Date(data.inboundAt) });
-  for (const [field, type] of Object.entries(eventFieldMap) as [keyof typeof eventFieldMap, EventType][]) {
-    const value = data[field];
-    if (value) events.push({ type, occurredAt: new Date(value) });
-  }
-  if (data.outboundAt) events.push({ type: "OUTBOUND", occurredAt: new Date(data.outboundAt) });
-  return events;
+function datedEvents(data: VehiclePayload, actorId?: string) {
+  return (Object.entries(eventFieldMap) as [keyof typeof eventFieldMap, EventType][])
+    .flatMap(([field, type]) => data[field] ? [{ type, occurredAt: new Date(data[field]!), actorId }] : []);
 }
 
-export async function createVehicle(data: VehiclePayload, idempotencyKey: string) {
+function auditSnapshot(record: VehicleRecord): Prisma.InputJsonValue {
+  const snapshot = { ...record };
+  delete snapshot.history;
+  return JSON.parse(JSON.stringify(snapshot)) as Prisma.InputJsonValue;
+}
+
+export async function createVehicle(data: VehiclePayload, idempotencyKey: string, context: MutationContext = {}) {
   return prisma.$transaction(async tx => {
     const previous = await tx.inventoryEvent.findUnique({
       where: { idempotencyKey },
@@ -156,27 +229,75 @@ export async function createVehicle(data: VehiclePayload, idempotencyKey: string
         outboundAt: data.outboundAt ? new Date(data.outboundAt) : undefined,
         pickupDetails: data.pickupDetails,
         notes: data.notes,
+        extra: { warehouseTimezone: data.warehouseTimezone },
         batchId: batch.id,
         customerId: customer.id,
         warehouseId: warehouse.id,
       },
     });
     await tx.inventoryEvent.create({
-      data: { vehicleId: vehicle.id, type: "CREATED", occurredAt: new Date(), idempotencyKey },
+      data: { vehicleId: vehicle.id, type: "CREATED", occurredAt: new Date(), idempotencyKey, actorId: context.actorId },
     });
-    const events = datedEvents(data);
+    const events = datedEvents(data, context.actorId);
     if (events.length) await tx.inventoryEvent.createMany({ data: events.map(event => ({ ...event, vehicleId: vehicle.id })) });
-    return tx.vehicle.findUniqueOrThrow({ where: { id: vehicle.id }, include: vehicleInclude });
+    const created = await tx.vehicle.findUniqueOrThrow({ where: { id: vehicle.id }, include: vehicleInclude });
+    await tx.auditLog.create({
+      data: { actorId: context.actorId, action: "VEHICLE_CREATED", entityType: "Vehicle", entityId: vehicle.id, after: auditSnapshot(toVehicleRecord(created)), ip: context.ip },
+    });
+    return created;
   });
 }
 
-export async function updateVehicle(id: string, data: VehicleUpdatePayload) {
+function sameDate(left?: string, right?: string) {
+  if (!left && !right) return true;
+  if (!left || !right) return false;
+  return new Date(left).getTime() === new Date(right).getTime();
+}
+
+async function appendDateCorrections(tx: Prisma.TransactionClient, existing: VehicleWithRelations, data: VehicleUpdatePayload, context: MutationContext) {
+  for (const [field, type] of Object.entries(eventFieldMap) as [keyof typeof eventFieldMap, EventType][]) {
+    const previous = field === "inboundAt" ? existing.inboundAt?.toISOString()
+      : field === "outboundAt" ? existing.outboundAt?.toISOString()
+        : effectiveEventAt(existing, field);
+    const next = data[field];
+    if (sameDate(previous, next)) continue;
+    const corrected = [...existing.events].reverse().find(event => event.type === type);
+    if (next) {
+      await tx.inventoryEvent.create({
+        data: {
+          vehicleId: existing.id,
+          type,
+          occurredAt: new Date(next),
+          correctionOfId: corrected?.id,
+          actorId: context.actorId,
+          payload: { source: "record-edit", field, previousValue: previous ?? null },
+        },
+      });
+    } else if (previous) {
+      await tx.inventoryEvent.create({
+        data: {
+          vehicleId: existing.id,
+          type: "CORRECTION",
+          occurredAt: new Date(),
+          correctionOfId: corrected?.id,
+          actorId: context.actorId,
+          payload: { source: "record-edit", field, eventType: type, value: null, previousValue: previous },
+        },
+      });
+    }
+  }
+}
+
+export async function updateVehicle(id: string, expectedVersion: number, data: VehicleUpdatePayload, context: MutationContext = {}) {
   return prisma.$transaction(async tx => {
-    const existing = await tx.vehicle.findUniqueOrThrow({ where: { id }, include: { events: true } });
+    const existing = await tx.vehicle.findUniqueOrThrow({ where: { id }, include: vehicleInclude });
+    if (existing.version !== expectedVersion) throw new VersionConflictError();
+    const before = toVehicleRecord(existing);
     const { batch, customer, warehouse } = await upsertRelations(tx, data);
-    const nextStatus = data.status ? statusCodes[data.status] : prismaStatus(data);
-    await tx.vehicle.update({
-      where: { id },
+    const nextStatus = data.status ? statusCodes[data.status] : existing.status;
+    const extra = { ...jsonObject(existing.extra), warehouseTimezone: data.warehouseTimezone } as Prisma.InputJsonObject;
+    const result = await tx.vehicle.updateMany({
+      where: { id, version: expectedVersion },
       data: {
         vin: data.vin,
         model: data.model,
@@ -187,42 +308,41 @@ export async function updateVehicle(id: string, data: VehicleUpdatePayload) {
         outboundAt: data.outboundAt ? new Date(data.outboundAt) : null,
         pickupDetails: data.pickupDetails ?? null,
         notes: data.notes ?? null,
+        extra,
         batchId: batch.id,
         customerId: customer.id,
         warehouseId: warehouse.id,
         version: { increment: 1 },
       },
     });
+    if (result.count !== 1) throw new VersionConflictError();
 
-    const latestByType = new Map<string, Date>();
-    for (const event of existing.events) {
-      const latest = latestByType.get(event.type);
-      if (!latest || event.occurredAt > latest) latestByType.set(event.type, event.occurredAt);
-    }
-    const changedEvents = datedEvents(data).filter(event =>
-      latestByType.get(event.type)?.getTime() !== event.occurredAt.getTime(),
-    );
-    if (changedEvents.length) {
-      await tx.inventoryEvent.createMany({
-        data: changedEvents.map(event => ({ ...event, vehicleId: id, payload: { source: "record-edit" } })),
-      });
-    }
+    await appendDateCorrections(tx, existing, data, context);
     if (existing.status !== nextStatus) {
       await tx.inventoryEvent.create({
         data: {
           vehicleId: id,
           type: nextStatus === "EXCEPTION" ? "EXCEPTION" : "CORRECTION",
           occurredAt: new Date(),
-          payload: {
-            source: "status-edit",
-            from: statusNames[existing.status],
-            to: statusNames[nextStatus],
-            reason: data.statusReason ?? null,
-          },
+          actorId: context.actorId,
+          payload: { source: "status-edit", field: "status", from: statusNames[existing.status], to: statusNames[nextStatus], reason: data.statusReason! },
         },
       });
     }
-    return tx.vehicle.findUniqueOrThrow({ where: { id }, include: vehicleInclude });
+    const updated = await tx.vehicle.findUniqueOrThrow({ where: { id }, include: vehicleInclude });
+    await tx.auditLog.create({
+      data: {
+        actorId: context.actorId,
+        action: "VEHICLE_UPDATED",
+        entityType: "Vehicle",
+        entityId: id,
+        before: auditSnapshot(before),
+        after: auditSnapshot(toVehicleRecord(updated)),
+        reason: data.statusReason,
+        ip: context.ip,
+      },
+    });
+    return updated;
   });
 }
 

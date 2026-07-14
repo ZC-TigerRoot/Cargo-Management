@@ -1,12 +1,15 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import Image from "next/image";
 import Link from "next/link";
+import QRCode from "qrcode";
 import { Download, FileSpreadsheet, Menu, Plus, Search, UploadCloud } from "lucide-react";
 import SideNav from "./side-nav";
 import VehicleFormModal from "./vehicle-form-modal";
-import { inventoryDays, type BusinessType, type VehicleRecord } from "@/lib/domain";
+import { can, inventoryDays, roleLabels, type BusinessType, type Role, type VehicleRecord } from "@/lib/domain";
 import { useVehicleRecords } from "@/lib/use-vehicle-records";
+import { useSession } from "@/lib/use-session";
 
 type Kind = "vehicles" | "overseas" | "domestic" | "pickups" | "imports" | "reports" | "users" | "settings";
 const meta: Record<Kind, { eyebrow: string; title: string; description: string }> = {
@@ -17,13 +20,14 @@ const meta: Record<Kind, { eyebrow: string; title: string; description: string }
   imports: { eyebrow: "数据迁移", title: "导入记录", description: "预校验 Excel 并处理异常数据" },
   reports: { eyebrow: "分析中心", title: "库存报表", description: "查看库存账龄、仓库分布与出入库趋势" },
   users: { eyebrow: "系统管理", title: "账号与权限", description: "管理用户角色和业务数据范围" },
-  settings: { eyebrow: "系统管理", title: "基础设置", description: "维护仓库、客户与业务字典" },
+  settings: { eyebrow: "系统管理", title: "基础设置", description: "查看仓库与客户主数据" },
 };
 
 export default function ModulePage({ kind }: { kind: Kind }) {
   const [mobile, setMobile] = useState(false);
   const [q, setQ] = useState("");
   const [modal, setModal] = useState(false);
+  const { user } = useSession();
   const m = meta[kind];
   const type: BusinessType | undefined = kind === "overseas" ? "overseas" : kind === "domestic" ? "domestic" : undefined;
   const { records, saveRecord, usingDemoData } = useVehicleRecords();
@@ -31,25 +35,26 @@ export default function ModulePage({ kind }: { kind: Kind }) {
     (!type || vehicle.type === type) && `${vehicle.vin}${vehicle.model}${vehicle.referenceNo}${vehicle.customer}`.toLowerCase().includes(q.toLowerCase()),
   ), [records, q, type]);
   const recordModule = ["vehicles", "overseas", "domestic"].includes(kind);
+  const role = user?.role ?? "viewer";
 
   return <div className="app-shell">
-    <SideNav open={mobile} onClose={() => setMobile(false)} />
+    <SideNav open={mobile} onClose={() => setMobile(false)} role={role} roleLabel={roleLabels[role]} userName={user?.name}/>
     <main className="main">
       <header className="topbar">
-        <button className="menu" onClick={() => setMobile(true)}><Menu /></button>
+        <button className="menu" onClick={() => setMobile(true)} aria-label="打开菜单"><Menu /></button>
         <div><p>{m.eyebrow}</p><h1>{m.title}</h1></div>
         <div className="top-actions">
-          {["vehicles", "overseas", "domestic", "reports"].includes(kind) && <a href="/api/v1/export" className="secondary-button"><Download />导出</a>}
-          {["vehicles", "overseas", "domestic", "pickups"].includes(kind) && <button className="primary-button" onClick={() => recordModule && setModal(true)}><Plus />{kind === "pickups" ? "创建任务" : "新增记录"}</button>}
+          {["vehicles", "overseas", "domestic", "reports"].includes(kind) && can(role, "export") && <a href="/api/v1/export" className="secondary-button"><Download />导出</a>}
+          {recordModule && can(role, "create") && <button className="primary-button" onClick={() => setModal(true)}><Plus />新增记录</button>}
         </div>
       </header>
       <section className="content">
         <div className="module-heading"><div><p className="eyebrow">{m.eyebrow}</p><h2>{m.title}</h2><p>{m.description}</p></div></div>
         {recordModule && usingDemoData && <p className="data-warning">当前显示演示数据；连接数据库后，新增和编辑记录将自动持久化。</p>}
         {recordModule && <VehicleModule rows={rows} q={q} setQ={setQ} />}
-        {kind === "pickups" && <PickupModule />}
+        {kind === "pickups" && <PickupModule records={records} canCreate={can(role, "create")} />}
         {kind === "imports" && <ImportModule />}
-        {kind === "reports" && <ReportModule />}
+        {kind === "reports" && <ReportModule records={records} />}
         {kind === "users" && <UsersModule />}
         {kind === "settings" && <SettingsModule />}
       </section>
@@ -65,70 +70,115 @@ function VehicleModule({ rows, q, setQ }: { rows: VehicleRecord[]; q: string; se
   </article>;
 }
 
-function PickupModule() {
-  return <div className="module-cards"><article className="panel action-card"><span>进行中</span><h3>PU-20260714-008</h3><p>星越 L · ···127654</p><small>二维码有效至 2026-07-15 18:00</small><Link href="/driver/demo-pickup">打开司机签收页 →</Link></article><article className="panel action-card"><span>待创建</span><h3>2 辆车等待提货</h3><p>BL-2026-0712</p><small>迪拜杰贝阿里保税仓</small><button className="primary-button">生成提货二维码</button></article></div>;
+type PickupTask = {
+  id: string; taskNo: string; expiresAt: string; createdAt: string; status: "pending" | "submitted" | "expired" | "revoked";
+  vehicles: { id: string; vin: string; model: string }[];
+};
+
+function expiryDefault() {
+  const date = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
 }
 
-type PreviewResult = {
-  fileName: string;
-  businessType: string;
-  totalRows: number;
-  validRows: number;
-  invalidRows: number;
-  missingHeaders: string[];
-  errors: { row: number; vin?: unknown; errors: string[] }[];
-};
+function PickupModule({ records, canCreate }: { records: VehicleRecord[]; canCreate: boolean }) {
+  const [tasks, setTasks] = useState<PickupTask[]>([]);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [expiresAt, setExpiresAt] = useState(expiryDefault);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [created, setCreated] = useState<{ path: string; qr: string }>();
+  const eligible = records.filter(vehicle => !vehicle.outboundAt && ["在库", "待放车", "待提货"].includes(vehicle.status));
+
+  useEffect(() => {
+    fetch("/api/v1/pickups").then(async response => {
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || "无法读取提货任务");
+      setTasks(result.data);
+    }).catch(reason => setError(reason instanceof Error ? reason.message : "无法读取提货任务"));
+  }, []);
+
+  async function createTask(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setLoading(true);
+    setError("");
+    setCreated(undefined);
+    try {
+      const response = await fetch("/api/v1/pickups", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ vehicleIds: selected, expiresAt: new Date(expiresAt).toISOString() }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || "创建提货任务失败");
+      const url = `${window.location.origin}${result.data.tokenPath}`;
+      setCreated({ path: result.data.tokenPath, qr: await QRCode.toDataURL(url, { width: 220, margin: 1 }) });
+      setTasks(current => [result.data, ...current]);
+      setSelected([]);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "创建提货任务失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const statusName = { pending: "进行中", submitted: "已签收", expired: "已过期", revoked: "已撤销" };
+  return <div className="pickup-layout">
+    {canCreate && <article className="panel pickup-create"><h3>创建提货二维码</h3><form onSubmit={createTask}><div className="pickup-vehicles">{eligible.map(vehicle => <label key={vehicle.id}><input type="checkbox" checked={selected.includes(vehicle.id)} onChange={event => setSelected(current => event.target.checked ? [...current, vehicle.id] : current.filter(id => id !== vehicle.id))}/><span><b>{vehicle.model}</b><small>{vehicle.vin} · {vehicle.warehouse}</small></span></label>)}{!eligible.length && <p className="muted">暂无可创建提货任务的车辆</p>}</div><label className="expiry-field">二维码有效期<input type="datetime-local" value={expiresAt} onChange={event => setExpiresAt(event.target.value)} required/></label><button className="primary-button" disabled={loading || !selected.length}>{loading ? "创建中…" : "生成提货二维码"}</button></form>{created && <div className="qr-result"><Image src={created.qr} width={180} height={180} unoptimized alt="司机提货二维码"/><Link href={created.path} target="_blank">打开司机签收页 →</Link><p>二维码只在创建时显示，请立即交付司机。</p></div>}{error && <p className="form-error">{error}</p>}</article>}
+    <div className="module-cards pickup-cards">{tasks.map(task => <article className="panel action-card" key={task.id}><span>{statusName[task.status]}</span><h3>{task.taskNo}</h3><p>{task.vehicles.map(vehicle => vehicle.model).join("、")}</p><small>{task.vehicles.map(vehicle => `···${vehicle.vin.slice(-6)}`).join(" · ")}<br/>有效至 {new Intl.DateTimeFormat("zh-CN", { dateStyle: "short", timeStyle: "short" }).format(new Date(task.expiresAt))}</small></article>)}{!tasks.length && !error && <p className="muted">暂无提货任务</p>}</div>
+  </div>;
+}
+
+type PreviewResult = { fileName: string; businessType: string; totalRows: number; validRows: number; invalidRows: number; missingHeaders: string[]; errors: { row: number; vin?: unknown; errors: string[] }[] };
 
 function ImportModule() {
   const [file, setFile] = useState<File>();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<PreviewResult>();
-
   async function preview(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!file) return;
-    setLoading(true);
-    setError("");
-    setResult(undefined);
-    const body = new FormData();
-    body.set("file", file);
+    setLoading(true); setError(""); setResult(undefined);
+    const body = new FormData(); body.set("file", file);
     try {
       const response = await fetch("/api/v1/import/preview", { method: "POST", body });
       const json = await response.json();
       if (!response.ok) throw new Error(json.message || "预校验失败");
       setResult(json.data);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "预校验失败");
-    } finally {
-      setLoading(false);
-    }
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "预校验失败"); }
+    finally { setLoading(false); }
   }
-
-  return <article className="panel import-box">
-    <UploadCloud /><h3>上传 Excel 进行预校验</h3><p>自动识别海外仓 23 列或国内仓 17 列标准模板</p>
-    <form onSubmit={preview}>
-      <label className="secondary-button">选择文件<input type="file" accept=".xlsx,.xls" onChange={event => setFile(event.target.files?.[0])} /></label>
-      {file && <button className="primary-button" disabled={loading}>{loading ? "校验中…" : "提交预校验"}</button>}
-    </form>
-    {file && <div className="file-selected"><FileSpreadsheet />已选择 {file.name}</div>}
-    {error && <p className="form-error">{error}</p>}
-    {result && <div className="import-result">
-      <h4>{result.businessType}：{result.validRows} / {result.totalRows} 行可导入</h4>
-      {!!result.missingHeaders.length && <p>缺少列：{result.missingHeaders.join("、")}</p>}
-      {result.errors.slice(0, 10).map(item => <p key={item.row}>第 {item.row} 行（{String(item.vin || "无车架号")}）：{item.errors.join("；")}</p>)}
-    </div>}
-  </article>;
+  return <article className="panel import-box"><UploadCloud/><h3>上传 Excel 进行预校验</h3><p>自动识别海外仓 23 列或国内仓 17 列标准模板，文件最大 10 MB</p><form onSubmit={preview}><label className="secondary-button">选择文件<input type="file" accept=".xlsx,.xls" onChange={event => setFile(event.target.files?.[0])}/></label>{file && <button className="primary-button" disabled={loading}>{loading ? "校验中…" : "提交预校验"}</button>}</form>{file && <div className="file-selected"><FileSpreadsheet/>已选择 {file.name}</div>}{error && <p className="form-error">{error}</p>}{result && <div className="import-result"><h4>{result.businessType}：{result.validRows} / {result.totalRows} 行可导入</h4>{result.errors.slice(0, 10).map(item => <p key={item.row}>第 {item.row} 行（{String(item.vin || "无车架号")}）：{item.errors.join("；")}</p>)}</div>}</article>;
 }
 
-function ReportModule() {
-  return <div className="report-grid"><article className="panel report-card"><span>实时在库</span><strong>2</strong><p>海外仓 1 · 国内仓 1</p></article><article className="panel report-card"><span>平均库存天数</span><strong>12.4</strong><p>较上月减少 2.1 天</p></article><article className="panel report-card"><span>30 天以上</span><strong>1</strong><p>需要业务跟进</p></article><article className="panel age-panel report-wide"><h3>库存账龄分布</h3><div className="age-bars">{[["0–7天", 62], ["8–15天", 38], ["16–30天", 23], ["30天以上", 10]].map(([name, width]) => <div key={name}><span>{name}</span><div><i className="green" style={{ width: `${width}%` }} /></div><b>{Math.ceil(Number(width) / 10)}</b></div>)}</div></article></div>;
+function ReportModule({ records }: { records: VehicleRecord[] }) {
+  const inStorage = records.filter(vehicle => !vehicle.outboundAt && vehicle.status !== "待入库");
+  const days = inStorage.map(vehicle => inventoryDays(vehicle.inboundAt));
+  const average = days.length ? (days.reduce((sum, value) => sum + value, 0) / days.length).toFixed(1) : "0.0";
+  const buckets = [["0–7天", 0, 7], ["8–15天", 8, 15], ["16–30天", 16, 30], ["30天以上", 31, Infinity]] as const;
+  const counts = buckets.map(([name, min, max]) => ({ name, count: days.filter(value => value >= min && value <= max).length }));
+  const max = Math.max(1, ...counts.map(item => item.count));
+  return <div className="report-grid"><article className="panel report-card"><span>实时在库/在途</span><strong>{inStorage.length}</strong><p>按当前车辆台账计算</p></article><article className="panel report-card"><span>平均库存天数</span><strong>{average}</strong><p>仅统计未出库车辆</p></article><article className="panel report-card"><span>30 天以上</span><strong>{counts[3].count}</strong><p>需要业务跟进</p></article><article className="panel age-panel report-wide"><h3>库存账龄分布</h3><div className="age-bars">{counts.map(item => <div key={item.name}><span>{item.name}</span><div><i className="green" style={{ width: `${item.count / max * 100}%` }}/></div><b>{item.count}</b></div>)}</div></article></div>;
 }
 
+type UserRow = { id: string; name: string; email: string; role: Role; active: boolean };
 function UsersModule() {
-  return <article className="panel simple-list">{[["林晓", "lin@example.com", "货代 / 操作管理"], ["Ahmed", "ahmed@example.com", "仓管员"], ["王经理", "wang@example.com", "经理 / 业务"]].map(user => <div key={user[1]}><span className="avatar">{user[0][0]}</span><p><b>{user[0]}</b><small>{user[1]}</small></p><span className="role-pill">{user[2]}</span><button>管理</button></div>)}</article>;
+  const [users, setUsers] = useState<UserRow[]>([]);
+  const [error, setError] = useState("");
+  useEffect(() => { fetch("/api/v1/users").then(async response => { const result = await response.json(); if (!response.ok) throw new Error(result.message); setUsers(result.data); }).catch(reason => setError(reason.message || "无法读取用户")); }, []);
+  async function update(user: UserRow, changes: Partial<Pick<UserRow, "active" | "role">>) {
+    const response = await fetch("/api/v1/users", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: user.id, ...changes }) });
+    const result = await response.json();
+    if (!response.ok) return setError(result.message || "更新失败");
+    setUsers(current => current.map(item => item.id === result.data.id ? result.data : item));
+  }
+  return <article className="panel simple-list">{users.map(user => <div key={user.id}><span className="avatar">{user.name[0]}</span><p><b>{user.name}</b><small>{user.email} · {user.active ? "启用" : "停用"}</small></p><select value={user.role} onChange={event => update(user, { role: event.target.value as Role })}>{Object.entries(roleLabels).map(([role, label]) => <option value={role} key={role}>{label}</option>)}</select><button onClick={() => update(user, { active: !user.active })}>{user.active ? "停用" : "启用"}</button></div>)}{error && <p className="form-error">{error}</p>}</article>;
 }
 
+type SettingsData = { warehouses: { id: string; name: string; location: string; bonded: boolean }[]; customers: { id: string; name: string; vehicleCount: number }[] };
 function SettingsModule() {
-  return <div className="module-cards"><article className="panel settings-card"><h3>仓库管理</h3><p>3 个仓库 · 1 个海外保税仓</p><button className="secondary-button">管理仓库</button></article><article className="panel settings-card"><h3>客户管理</h3><p>4 个业务客户</p><button className="secondary-button">管理客户</button></article><article className="panel settings-card"><h3>业务字典</h3><p>状态、港口、车型等标准值</p><button className="secondary-button">管理字典</button></article></div>;
+  const [data, setData] = useState<SettingsData>({ warehouses: [], customers: [] });
+  const [error, setError] = useState("");
+  useEffect(() => { fetch("/api/v1/settings").then(async response => { const result = await response.json(); if (!response.ok) throw new Error(result.message); setData(result.data); }).catch(reason => setError(reason.message || "无法读取基础设置")); }, []);
+  return <div><div className="module-cards"><article className="panel settings-card"><h3>仓库主数据</h3>{data.warehouses.map(warehouse => <p key={warehouse.id}><b>{warehouse.name}</b><br/>{warehouse.location} · {warehouse.bonded ? "保税仓" : "普通仓"}</p>)}</article><article className="panel settings-card"><h3>客户主数据</h3>{data.customers.map(customer => <p key={customer.id}><b>{customer.name}</b> · {customer.vehicleCount} 辆车</p>)}</article></div>{error && <p className="form-error">{error}</p>}</div>;
 }

@@ -1,0 +1,23 @@
+.pickup-layout { display: grid; grid-template-columns: minmax(300px, .9fr) 1.4fr; gap: 16px; align-items: start; }
+.pickup-create { padding: 22px; }
+.pickup-create h3 { margin: 0 0 16px; }
+.pickup-create form { display: grid; gap: 14px; }
+.pickup-vehicles { display: grid; gap: 8px; max-height: 330px; overflow: auto; }
+.pickup-vehicles label { display: flex; align-items: center; gap: 9px; padding: 10px; border: 1px solid var(--line); border-radius: 9px; cursor: pointer; }
+.pickup-vehicles b, .pickup-vehicles small { display: block; font-size: 11px; }
+.pickup-vehicles small { color: var(--muted); margin-top: 3px; }
+.expiry-field { font-size: 11px; font-weight: 700; color: #58635d; }
+.expiry-field input { display: block; width: 100%; height: 43px; border: 1px solid var(--line); border-radius: 8px; padding: 0 10px; margin-top: 6px; }
+.pickup-cards { grid-template-columns: repeat(2, 1fr); }
+.qr-result { display: grid; justify-items: center; gap: 8px; padding: 16px; background: #f4f7f5; border-radius: 10px; }
+.qr-result a { color: var(--green); font-size: 12px; font-weight: 700; }
+.qr-result p { margin: 0; color: var(--muted); font-size: 10px; }
+.simple-list select { border: 1px solid var(--line); border-radius: 7px; padding: 6px; font-size: 10px; background: white; }
+
+@media (max-width: 900px) {
+  .pickup-layout { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 760px) {
+  .pickup-cards { grid-template-columns: 1fr; }
+}

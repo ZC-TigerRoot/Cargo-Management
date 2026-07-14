@@ -1,11 +1,12 @@
 import { z } from "zod";
 import { vehicleStatuses } from "./domain";
+import { isTimeZone } from "./datetime";
 
 const optionalText = z.string().trim().optional().transform(value => value || undefined);
 const optionalDateTime = z.iso.datetime({ offset: true }).optional();
 
 export const vehiclePayload = z.object({
-  vin: z.string().trim().length(17, "车架号必须为 17 位"),
+  vin: z.string().trim().toUpperCase().regex(/^[A-HJ-NPR-Z0-9]{17}$/, "车架号必须为 17 位且不能包含 I、O、Q"),
   model: z.string().trim().min(1, "车型不能为空"),
   brand: optionalText,
   type: z.enum(["overseas", "domestic"]),
@@ -19,6 +20,7 @@ export const vehiclePayload = z.object({
   manufacturer: optionalText,
   warehouseLocation: z.string().trim().min(1, "仓库地点不能为空"),
   warehouse: z.string().trim().min(1, "入库仓库名称不能为空"),
+  warehouseTimezone: z.string().trim().refine(isTimeZone, "仓库时区无效"),
   customer: z.string().trim().min(1, "所属客人不能为空"),
   inboundAt: optionalDateTime,
   merchantReleaseAt: optionalDateTime,
@@ -42,12 +44,18 @@ export const vehiclePayload = z.object({
 export const vehicleInput = vehiclePayload.and(z.object({ idempotencyKey: z.string().min(8) }));
 export const vehicleUpdateInput = vehiclePayload.and(z.object({
   id: z.string().min(1),
+  version: z.number().int().positive(),
   status: z.enum(vehicleStatuses).optional(),
   statusReason: optionalText,
-}));
+})).superRefine((data, ctx) => {
+  if (data.status && !data.statusReason) {
+    ctx.addIssue({ code: "custom", path: ["statusReason"], message: "状态变更必须填写原因" });
+  }
+});
 
 export const driverSubmission = z.object({
   name: z.string().trim().min(2), phone: z.string().trim().min(6), plateNo: z.string().trim().min(2),
-  pickupAt: z.iso.datetime(), confirmed: z.literal(true), signature: z.string().min(1),
+  pickupAt: z.iso.datetime(), confirmed: z.literal(true), signature: z.string().trim().min(1).max(200),
+  photoDataUrl: z.string().startsWith("data:image/").max(7_000_000).optional(),
   idempotencyKey: z.string().min(8),
 });

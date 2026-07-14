@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import "./enhancements.css";
 
 export const metadata: Metadata = {
   title: "车仓通 · 汽车仓储管理",
@@ -10,4 +11,3 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return <html lang="zh-CN"><body>{children}</body></html>;
 }
-

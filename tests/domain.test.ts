@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { can, inventoryDays, transitions } from "../src/lib/domain";
 import { vehicleInput, vehicleUpdateInput } from "../src/lib/validators";
+import { localInputValue, zonedLocalToIso } from "../src/lib/datetime";
 
 describe("库存领域规则", () => {
   it("出库后库存天数固定", () => expect(inventoryDays("2026-07-01T00:00:00Z", "2026-07-11T00:00:00Z", new Date("2026-08-01"))).toBe(10));
@@ -21,6 +22,7 @@ describe("车辆录入校验", () => {
     referenceNo: "BL-2026-0712",
     warehouseLocation: "Dubai Logistics District",
     warehouse: "迪拜杰贝阿里保税仓",
+    warehouseTimezone: "Asia/Dubai",
     customer: "海湾汽车贸易",
     idempotencyKey: "test-request-001",
   };
@@ -62,6 +64,7 @@ describe("车辆录入校验", () => {
     const result = vehicleUpdateInput.safeParse({
       ...vehicle,
       id: "vehicle-001",
+      version: 1,
       status: "异常",
       statusReason: "右后视镜划痕，等待客户确认",
     });
@@ -70,7 +73,25 @@ describe("车辆录入校验", () => {
 
   it("拒绝未知车辆状态", () => {
     const vehicle = Object.fromEntries(Object.entries(base).filter(([key]) => key !== "idempotencyKey"));
-    const result = vehicleUpdateInput.safeParse({ ...vehicle, id: "vehicle-001", status: "运输中" });
+    const result = vehicleUpdateInput.safeParse({ ...vehicle, id: "vehicle-001", version: 1, status: "运输中" });
     expect(result.success).toBe(false);
+  });
+
+  it("状态变更必须填写原因", () => {
+    const vehicle = Object.fromEntries(Object.entries(base).filter(([key]) => key !== "idempotencyKey"));
+    expect(vehicleUpdateInput.safeParse({ ...vehicle, id: "vehicle-001", version: 1, status: "异常" }).success).toBe(false);
+  });
+
+  it("规范化小写 VIN", () => {
+    const result = vehicleInput.parse({ ...base, vin: "l6t79s2e8ra102847" });
+    expect(result.vin).toBe("L6T79S2E8RA102847");
+  });
+});
+
+describe("仓库时区", () => {
+  it("按迪拜当地时间解释录入值", () => {
+    const instant = zonedLocalToIso("2026-07-14T09:30", "Asia/Dubai");
+    expect(instant).toBe("2026-07-14T05:30:00.000Z");
+    expect(localInputValue(instant, "Asia/Dubai")).toBe("2026-07-14T09:30");
   });
 });

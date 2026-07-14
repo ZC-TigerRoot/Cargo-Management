@@ -5,12 +5,12 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, CalendarDays, MapPin, Pencil, ShieldCheck } from "lucide-react";
 import { vehicles } from "@/lib/demo-data";
-import { inventoryDays, type VehicleRecord } from "@/lib/domain";
+import { can, inventoryDays, type VehicleRecord } from "@/lib/domain";
+import { businessDate } from "@/lib/datetime";
+import { useSession } from "@/lib/use-session";
 import VehicleFormModal from "@/components/vehicle-form-modal";
 
-const formatDate = (value?: string) => value ? new Intl.DateTimeFormat("zh-CN", {
-  year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false,
-}).format(new Date(value)) : "—";
+const formatDate = (value: string | undefined, timeZone: string) => businessDate(value, timeZone) || "—";
 
 const timelineFields: { field: keyof VehicleRecord; title: string }[] = [
   { field: "inboundAt", title: "车辆入库" },
@@ -25,6 +25,7 @@ const timelineFields: { field: keyof VehicleRecord; title: string }[] = [
 
 export default function VehicleDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const { user } = useSession();
   const [vehicle, setVehicle] = useState<VehicleRecord | undefined>(() => vehicles.find(item => item.id === id));
   const [loading, setLoading] = useState(!vehicle);
   const [editing, setEditing] = useState(false);
@@ -42,17 +43,28 @@ export default function VehicleDetailPage() {
     return () => controller.abort();
   }, [id]);
 
-  const timeline = useMemo(() => vehicle ? timelineFields
-    .map(item => ({ ...item, time: vehicle[item.field] as string | undefined }))
-    .filter((item): item is typeof item & { time: string } => Boolean(item.time))
-    .sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime()) : [], [vehicle]);
+  const timeline = useMemo(() => {
+    if (!vehicle) return [];
+    if (vehicle.history?.length) return vehicle.history.map(event => ({
+      field: event.id,
+      title: event.title,
+      time: event.occurredAt,
+      recordedAt: event.recordedAt,
+      actor: event.actor,
+      reason: event.reason,
+    }));
+    return timelineFields
+      .map(item => ({ ...item, time: vehicle[item.field] as string | undefined, recordedAt: undefined, actor: undefined, reason: undefined }))
+      .filter((item): item is typeof item & { time: string } => Boolean(item.time))
+      .sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
+  }, [vehicle]);
 
   if (loading) return <main className="detail-shell"><p className="muted">正在加载车辆档案…</p></main>;
   if (!vehicle) return <main className="detail-shell"><Link href="/" className="back"><ArrowLeft size={17} /> 返回车辆台账</Link><section className="panel not-found"><h1>车辆档案不存在</h1><p>记录可能已删除，或数据库尚未连接。</p></section></main>;
 
   const overseas = vehicle.type === "overseas";
   const typeFacts: [string, string | undefined][] = overseas
-    ? [["HS#", vehicle.hsCode], ["起运港", vehicle.portOfLoad], ["目的港", vehicle.portOfDischarge], ["船名航次", vehicle.vesselVoyage], ["ETD", formatDate(vehicle.etd)], ["ETA", formatDate(vehicle.eta)]]
+    ? [["HS#", vehicle.hsCode], ["起运港", vehicle.portOfLoad], ["目的港", vehicle.portOfDischarge], ["船名航次", vehicle.vesselVoyage], ["ETD", formatDate(vehicle.etd, vehicle.warehouseTimezone)], ["ETA", formatDate(vehicle.eta, vehicle.warehouseTimezone)]]
     : [["品牌", vehicle.brand], ["生产商", vehicle.manufacturer]];
   const facts: [string, string | undefined][] = [
     ["业务类型", overseas ? "海外保税仓" : "国内仓储"],
@@ -62,16 +74,17 @@ export default function VehicleDetailPage() {
     ["所属客人", vehicle.customer],
     [overseas ? "保税仓地点" : "仓库地点", vehicle.warehouseLocation],
     ["入库仓库名称", vehicle.warehouse],
-    [overseas ? "入保税仓时间" : "入仓时间", formatDate(vehicle.inboundAt)],
-    ["实际出库时间", formatDate(vehicle.outboundAt)],
+    ["仓库时区", vehicle.warehouseTimezone],
+    [overseas ? "入保税仓时间" : "入仓时间", formatDate(vehicle.inboundAt, vehicle.warehouseTimezone)],
+    ["实际出库时间", formatDate(vehicle.outboundAt, vehicle.warehouseTimezone)],
   ];
 
   return <main className="detail-shell">
-    <div className="detail-actions"><Link href="/" className="back"><ArrowLeft size={17} /> 返回车辆台账</Link><button className="secondary-button" onClick={() => setEditing(true)}><Pencil />编辑档案</button></div>
+    <div className="detail-actions"><Link href="/" className="back"><ArrowLeft size={17} /> 返回车辆台账</Link>{user && can(user.role, "correct") && <button className="secondary-button" onClick={() => setEditing(true)}><Pencil />编辑档案</button>}</div>
     <section className="detail-hero"><div><span className={`status status-${vehicle.status}`}>{vehicle.status}</span><p className="eyebrow">车辆档案</p><h1>{vehicle.model}</h1><p className="vin">{vehicle.vin}</p></div><div className="detail-days"><strong>{inventoryDays(vehicle.inboundAt, vehicle.outboundAt)}</strong><span>库存天数</span></div></section>
     <div className="detail-grid">
       <section className="panel detail-main"><h2>业务信息</h2><div className="fact-grid">{facts.map(([label, content]) => <div key={label}><span>{label}</span><b>{label.includes("地点") || label.includes("仓库") ? <MapPin size={15} /> : label.includes("时间") ? <CalendarDays size={15} /> : <ShieldCheck size={15} />}{content || "—"}</b></div>)}</div>{vehicle.pickupDetails && <div className="notice"><b>出库提货明细</b><p>{vehicle.pickupDetails}</p></div>}{vehicle.notes && <div className="notice"><b>备注</b><p>{vehicle.notes}</p></div>}</section>
-      <section className="panel"><h2>不可覆盖的业务时间线</h2>{timeline.length ? <div className="timeline">{timeline.map((item, index) => <div className="timeline-item" key={`${item.field}-${item.time}`}><i className={index === timeline.length - 1 ? "active" : ""} /><div><b>{item.title}</b><time>{formatDate(item.time)}</time><p>该业务时间已记录；后续修改将追加更正记录。</p><small>系统业务事件</small></div></div>)}</div> : <p className="muted">尚未录入业务节点时间。</p>}</section>
+      <section className="panel"><h2>不可覆盖的业务时间线</h2>{timeline.length ? <div className="timeline">{timeline.map((item, index) => <div className="timeline-item" key={`${item.field}-${item.time}`}><i className={index === timeline.length - 1 ? "active" : ""} /><div><b>{item.title}</b><time>{formatDate(item.time, vehicle.warehouseTimezone)}</time><p>{item.reason || "该业务事件已记录；后续修改只会追加更正记录。"}</p><small>{item.actor || "系统业务事件"}{item.recordedAt ? ` · 记录于 ${formatDate(item.recordedAt, vehicle.warehouseTimezone)}` : ""}</small></div></div>)}</div> : <p className="muted">尚未录入业务节点时间。</p>}</section>
     </div>
     {editing && <VehicleFormModal initial={vehicle} onClose={() => setEditing(false)} onSaved={setVehicle} />}
   </main>;

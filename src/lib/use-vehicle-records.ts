@@ -12,6 +12,10 @@ export function useVehicleRecords() {
     const controller = new AbortController();
     fetch("/api/v1/vehicles", { signal: controller.signal })
       .then(async response => {
+        if (response.status === 401) {
+          window.location.assign("/login");
+          throw new DOMException("Session expired", "AbortError");
+        }
         if (!response.ok) throw new Error("database unavailable");
         return response.json() as Promise<{ data: VehicleRecord[] }>;
       })

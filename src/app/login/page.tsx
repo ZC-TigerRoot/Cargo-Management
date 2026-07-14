@@ -1,3 +1,41 @@
-import Link from "next/link";
-export default function Login() { return <main className="login-page"><section className="login-card"><div className="brand-mark">车</div><p className="eyebrow">CARGO FLOW</p><h1>欢迎回到车仓通</h1><p className="muted">使用公司邮箱进入汽车仓储协同平台</p><form><label>邮箱地址<input type="email" defaultValue="operator@example.com" /></label><label>密码<input type="password" defaultValue="demo-password" /></label><Link className="primary-button" href="/">登录系统</Link></form><p className="login-foot">演示账号可直接登录 · 数据仅用于功能预览</p></section></main> }
+"use client";
 
+import { FormEvent, useState } from "react";
+
+export default function Login() {
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSubmitting(true);
+    setError("");
+    const form = new FormData(event.currentTarget);
+    try {
+      const response = await fetch("/api/v1/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: form.get("email"), password: form.get("password") }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || "登录失败");
+      const next = new URLSearchParams(window.location.search).get("next");
+      window.location.assign(next?.startsWith("/") && !next.startsWith("//") ? next : "/");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "登录失败，请稍后重试");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return <main className="login-page"><section className="login-card">
+    <div className="brand-mark">车</div><p className="eyebrow">CARGO FLOW</p><h1>欢迎回到车仓通</h1>
+    <p className="muted">使用已开通的公司账号进入汽车仓储协同平台</p>
+    <form onSubmit={submit}>
+      <label>邮箱地址<input name="email" type="email" autoComplete="username" required /></label>
+      <label>密码<input name="password" type="password" autoComplete="current-password" minLength={8} required /></label>
+      {error && <p className="form-error" role="alert">{error}</p>}
+      <button className="primary-button" disabled={submitting}>{submitting ? "登录中…" : "登录系统"}</button>
+    </form>
+  </section></main>;
+}

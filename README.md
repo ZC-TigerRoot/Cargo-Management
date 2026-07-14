@@ -1,23 +1,53 @@
 # 车仓通 · 汽车仓储管理系统
 
-面向海外保税仓和国内汽车仓储业务的响应式 Web/PWA。首版包含车辆台账、实时库存看板、角色权限预览、入库录入、车辆审计时间线、司机免登录提车签收、Excel 预校验和导出接口。
+面向海外保税仓和国内汽车仓储业务的响应式 Web/PWA。系统包含车辆台账、实时库存看板、角色权限、车辆审计时间线、司机二维码提车签收、Excel 预校验和库存导出。
 
 ## 本地启动
 
-1. 复制 `.env.example` 为 `.env`。
-2. 使用 `docker compose up -d` 启动 PostgreSQL。
-3. 执行 `pnpm db:generate`、`pnpm db:migrate` 和 `pnpm dev`。
-4. 访问 `http://localhost:3000`；司机签收演示页为 `/driver/demo-pickup`。
+要求 Node.js 22、pnpm 11 和 PostgreSQL 16。
 
-系统通过 Prisma/PostgreSQL 持久化车辆、批次、仓库、客户及不可覆盖的业务事件。数据库尚未启动时，页面会回退显示内置演示车辆并给出提示；演示状态下不能保存。海外仓和国内仓录入表单会按业务类型显示对应字段，库存天数由入库和实际出库时间自动计算。
+1. 复制 `.env.example` 为 `.env`，设置不少于 32 字符的随机 `AUTH_SECRET`，并替换管理员邮箱和密码。
+2. 使用 `docker compose up -d` 启动 PostgreSQL。
+3. 执行 `pnpm install`、`pnpm db:generate`、`pnpm db:migrate` 和 `pnpm db:seed`。
+4. 执行 `pnpm dev`，访问 `http://localhost:3000/login`。
+
+如需创建演示车辆和 `/driver/demo-pickup` 提货任务，可在首次执行 `pnpm db:seed` 前设置 `SEED_DEMO_DATA="true"`。生产环境应保持为 `false`。
+
+## 权限与数据安全
+
+- 登录会话使用由 `AUTH_SECRET` 签名的 HttpOnly、SameSite=Strict Cookie，有效期 8 小时。
+- 仓管员可查看和录入；操作管理员可查看、录入、更正和导出；业务查看者只读；系统管理员拥有全部权限及用户管理权限。
+- 权限在页面代理和每个 API handler 中同时校验，写请求还校验同源信息。
+- 车辆修改使用版本号进行乐观锁检查；并发冲突返回 HTTP 409，不会静默覆盖其他用户的修改。
+- 车辆创建、修改、状态变更、提货任务和司机签收均在数据库事务中写入审计日志或库存事件。
 
 ## 主要接口
 
-- `GET/POST /api/v1/vehicles`：车辆查询与录入。
-- `PATCH /api/v1/vehicles`：编辑车辆并追加业务时间事件。
-- `GET /api/v1/dashboard`：库存指标。
-- `GET/POST /api/v1/driver/:token`：司机任务与签收。
-- `POST /api/v1/import/preview`：Excel 导入预校验。
-- `GET /api/v1/export`：库存 Excel 导出。
+- `POST /api/v1/auth/login`、`POST /api/v1/auth/logout`：登录会话。
+- `GET/POST/PATCH /api/v1/vehicles`：车辆查询、录入和带版本控制的更正。
+- `GET /api/v1/dashboard`：实时库存指标。
+- `GET/POST /api/v1/pickups`：查询和创建提货二维码任务。
+- `GET/POST /api/v1/driver/:token`：司机读取任务与幂等签收。
+- `POST /api/v1/import/preview`：Excel 导入预校验；限制 10 MB 和 10,000 行。
+- `GET /api/v1/export`：按仓库当地时区导出库存 Excel。
+- `GET/PATCH /api/v1/users`、`GET /api/v1/settings`：管理员用户和主数据接口。
 
-Excel 字段映射和拒绝导入规则见 `docs/field-mapping.md`。
+Excel 字段映射和拒绝规则见 `docs/field-mapping.md`。日期在表单中按车辆的仓库时区解释，数据库保存为绝对时间，页面和导出时再转换回仓库当地时间。
+
+## 验证和部署
+
+```bash
+pnpm test
+pnpm lint
+pnpm exec tsc --noEmit
+pnpm build
+```
+
+Docker 镜像会固定并启用 pnpm 11.7.0：
+
+```bash
+docker build -t cargo-management .
+docker run --env-file .env -p 3000:3000 cargo-management
+```
+
+部署前必须执行 `pnpm db:deploy` 和 `pnpm db:seed`，并确保 `APP_URL`、数据库连接和管理员密码使用生产值。
