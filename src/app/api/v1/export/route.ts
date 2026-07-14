@@ -1,0 +1,3 @@
+import { NextResponse } from "next/server"; import * as XLSX from "xlsx"; import { vehicles } from "@/lib/demo-data";
+export async function GET(){ const sheet=XLSX.utils.json_to_sheet(vehicles.map(v=>({车架号:v.vin,车型:v.model,品牌:v.brand,业务类型:v.type==='overseas'?'海外仓':'国内仓',提单或PO:v.referenceNo,仓库:v.warehouse,所属客人:v.customer,库存状态:v.status,入库时间:v.inboundAt,出库时间:v.outboundAt,备注:v.notes})));const book=XLSX.utils.book_new();XLSX.utils.book_append_sheet(book,sheet,"车辆库存");const data=XLSX.write(book,{type:"buffer",bookType:"xlsx"});return new NextResponse(data,{headers:{"Content-Type":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","Content-Disposition":"attachment; filename=cargo-inventory.xlsx"}}); }
+

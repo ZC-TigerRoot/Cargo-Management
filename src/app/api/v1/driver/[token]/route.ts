@@ -1,0 +1,4 @@
+import { NextRequest, NextResponse } from "next/server"; import { driverSubmission } from "@/lib/validators";
+export async function GET(_:NextRequest,{params}:{params:Promise<{token:string}>}){ const {token}=await params;if(token!=="demo-pickup")return NextResponse.json({error:"TASK_NOT_FOUND"},{status:404});return NextResponse.json({data:{taskNo:"PU-20260714-008",expiresAt:"2026-07-15T18:00:00+08:00",vehicles:[{vin:"LGXCE6DB1R0127654",model:"星越 L"}]}}); }
+export async function POST(req:NextRequest,{params}:{params:Promise<{token:string}>}){ const {token}=await params;if(token!=="demo-pickup")return NextResponse.json({error:"TASK_NOT_FOUND"},{status:404});const parsed=driverSubmission.safeParse(await req.json());if(!parsed.success)return NextResponse.json({error:"VALIDATION_ERROR",issues:parsed.error.flatten()},{status:422});return NextResponse.json({data:{status:"submitted",receiptNo:"RC-20260714-008"}},{status:201}); }
+

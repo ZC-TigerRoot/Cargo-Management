@@ -1,0 +1,4 @@
+import { NextRequest, NextResponse } from "next/server"; import * as XLSX from "xlsx";
+const accepted=["车架号","车型","所属客人"];
+export async function POST(req:NextRequest){const form=await req.formData();const file=form.get("file");if(!(file instanceof File))return NextResponse.json({error:"FILE_REQUIRED"},{status:400});const wb=XLSX.read(await file.arrayBuffer());const rows=XLSX.utils.sheet_to_json<Record<string,unknown>>(wb.Sheets[wb.SheetNames[0]],{defval:null});const headers=rows[0]?Object.keys(rows[0]):[];const missing=accepted.filter(h=>!headers.includes(h));const invalid=rows.map((r,i)=>({row:i+2,vin:r["车架号"],errors:[!r["车架号"]&&"缺少车架号",typeof r["车架号"]==='string'&&r["车架号"].length!==17&&"车架号不是17位"].filter(Boolean)})).filter(x=>x.errors.length);return NextResponse.json({data:{fileName:file.name,totalRows:rows.length,validRows:rows.length-invalid.length,invalidRows:invalid.length,missingHeaders:missing,errors:invalid.slice(0,100)}});}
+

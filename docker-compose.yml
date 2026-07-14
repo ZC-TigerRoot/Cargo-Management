@@ -1,0 +1,17 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: cargo_management
+      POSTGRES_USER: cargo
+      POSTGRES_PASSWORD: cargo-local-password
+    ports: ["5432:5432"]
+    volumes: ["cargo_pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cargo -d cargo_management"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+volumes:
+  cargo_pgdata:
+
