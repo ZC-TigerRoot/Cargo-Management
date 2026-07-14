@@ -1,0 +1,38 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import type { VehicleRecord } from "./domain";
+import { vehicles as demoVehicles } from "./demo-data";
+
+export function useVehicleRecords() {
+  const [records, setRecords] = useState<VehicleRecord[]>(demoVehicles);
+  const [usingDemoData, setUsingDemoData] = useState(true);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch("/api/v1/vehicles", { signal: controller.signal })
+      .then(async response => {
+        if (!response.ok) throw new Error("database unavailable");
+        return response.json() as Promise<{ data: VehicleRecord[] }>;
+      })
+      .then(result => {
+        setRecords(result.data);
+        setUsingDemoData(false);
+      })
+      .catch(error => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setUsingDemoData(true);
+      });
+    return () => controller.abort();
+  }, []);
+
+  function saveRecord(record: VehicleRecord) {
+    setRecords(current => {
+      const exists = current.some(item => item.id === record.id);
+      return exists ? current.map(item => item.id === record.id ? record : item) : [record, ...current];
+    });
+    setUsingDemoData(false);
+  }
+
+  return { records, saveRecord, usingDemoData };
+}
