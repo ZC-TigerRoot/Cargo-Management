@@ -72,8 +72,11 @@ function VehicleModule({ rows, q, setQ }: { rows: VehicleRecord[]; q: string; se
 
 type PickupTask = {
   id: string; taskNo: string; expiresAt: string; createdAt: string; status: "pending" | "submitted" | "expired" | "revoked";
+  tokenPath: string; pickupUrl: string;
   vehicles: { id: string; vin: string; model: string }[];
 };
+
+type PickupQr = { taskNo: string; url: string; qr: string };
 
 function expiryDefault() {
   const date = new Date(Date.now() + 24 * 60 * 60 * 1000);
@@ -86,7 +89,7 @@ function PickupModule({ records, canCreate }: { records: VehicleRecord[]; canCre
   const [expiresAt, setExpiresAt] = useState(expiryDefault);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [created, setCreated] = useState<{ path: string; qr: string }>();
+  const [pickupQr, setPickupQr] = useState<PickupQr>();
   const eligible = records.filter(vehicle => !vehicle.outboundAt && ["在库", "待放车", "待提货"].includes(vehicle.status));
 
   useEffect(() => {
@@ -101,7 +104,7 @@ function PickupModule({ records, canCreate }: { records: VehicleRecord[]; canCre
     event.preventDefault();
     setLoading(true);
     setError("");
-    setCreated(undefined);
+    setPickupQr(undefined);
     try {
       const response = await fetch("/api/v1/pickups", {
         method: "POST",
@@ -110,8 +113,7 @@ function PickupModule({ records, canCreate }: { records: VehicleRecord[]; canCre
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.message || "创建提货任务失败");
-      const url = `${window.location.origin}${result.data.tokenPath}`;
-      setCreated({ path: result.data.tokenPath, qr: await QRCode.toDataURL(url, { width: 220, margin: 1 }) });
+      setPickupQr({ taskNo: result.data.taskNo, url: result.data.pickupUrl, qr: await QRCode.toDataURL(result.data.pickupUrl, { width: 220, margin: 1 }) });
       setTasks(current => [result.data, ...current]);
       setSelected([]);
     } catch (reason) {
@@ -121,10 +123,19 @@ function PickupModule({ records, canCreate }: { records: VehicleRecord[]; canCre
     }
   }
 
+  async function showTaskQr(task: PickupTask) {
+    setError("");
+    try {
+      setPickupQr({ taskNo: task.taskNo, url: task.pickupUrl, qr: await QRCode.toDataURL(task.pickupUrl, { width: 220, margin: 1 }) });
+    } catch {
+      setError("无法生成二维码，请检查当前域名设置");
+    }
+  }
+
   const statusName = { pending: "进行中", submitted: "已签收", expired: "已过期", revoked: "已撤销" };
   return <div className="pickup-layout">
-    {canCreate && <article className="panel pickup-create"><h3>创建提货二维码</h3><form onSubmit={createTask}><div className="pickup-vehicles">{eligible.map(vehicle => <label key={vehicle.id}><input type="checkbox" checked={selected.includes(vehicle.id)} onChange={event => setSelected(current => event.target.checked ? [...current, vehicle.id] : current.filter(id => id !== vehicle.id))}/><span><b>{vehicle.model}</b><small>{vehicle.vin} · {vehicle.warehouse}</small></span></label>)}{!eligible.length && <p className="muted">暂无可创建提货任务的车辆</p>}</div><label className="expiry-field">二维码有效期<input type="datetime-local" value={expiresAt} onChange={event => setExpiresAt(event.target.value)} required/></label><button className="primary-button" disabled={loading || !selected.length}>{loading ? "创建中…" : "生成提货二维码"}</button></form>{created && <div className="qr-result"><Image src={created.qr} width={180} height={180} unoptimized alt="司机提货二维码"/><Link href={created.path} target="_blank">打开司机签收页 →</Link><p>二维码只在创建时显示，请立即交付司机。</p></div>}{error && <p className="form-error">{error}</p>}</article>}
-    <div className="module-cards pickup-cards">{tasks.map(task => <article className="panel action-card" key={task.id}><span>{statusName[task.status]}</span><h3>{task.taskNo}</h3><p>{task.vehicles.map(vehicle => vehicle.model).join("、")}</p><small>{task.vehicles.map(vehicle => `···${vehicle.vin.slice(-6)}`).join(" · ")}<br/>有效至 {new Intl.DateTimeFormat("zh-CN", { dateStyle: "short", timeStyle: "short" }).format(new Date(task.expiresAt))}</small></article>)}{!tasks.length && !error && <p className="muted">暂无提货任务</p>}</div>
+    <article className="panel pickup-create"><h3>{canCreate ? "创建提货二维码" : "查看提货二维码"}</h3>{canCreate && <form onSubmit={createTask}><div className="pickup-vehicles">{eligible.map(vehicle => <label key={vehicle.id}><input type="checkbox" checked={selected.includes(vehicle.id)} onChange={event => setSelected(current => event.target.checked ? [...current, vehicle.id] : current.filter(id => id !== vehicle.id))}/><span><b>{vehicle.model}</b><small>{vehicle.vin} · {vehicle.warehouse}</small></span></label>)}{!eligible.length && <p className="muted">暂无可创建提货任务的车辆</p>}</div><label className="expiry-field">二维码有效期<input type="datetime-local" value={expiresAt} onChange={event => setExpiresAt(event.target.value)} required/></label><button className="primary-button" disabled={loading || !selected.length}>{loading ? "创建中…" : "生成提货二维码"}</button></form>}{pickupQr ? <div className="qr-result"><b>{pickupQr.taskNo}</b><Image src={pickupQr.qr} width={180} height={180} unoptimized alt="司机提货二维码"/><div className="qr-actions"><a href={pickupQr.url} target="_blank" rel="noreferrer">打开签收页</a><a href={pickupQr.qr} download={`${pickupQr.taskNo}-二维码.png`}>下载二维码</a></div><p>{pickupQr.url}</p><small>此二维码可随时从右侧任务中重新查看。</small></div> : !canCreate && <p className="muted">请从右侧任务中选择“查看二维码”。</p>}{error && <p className="form-error">{error}</p>}</article>
+    <div className="module-cards pickup-cards">{tasks.map(task => <article className="panel action-card" key={task.id}><span>{statusName[task.status]}</span><h3>{task.taskNo}</h3><p>{task.vehicles.map(vehicle => vehicle.model).join("、")}</p><small>{task.vehicles.map(vehicle => `···${vehicle.vin.slice(-6)}`).join(" · ")}<br/>有效至 {new Intl.DateTimeFormat("zh-CN", { dateStyle: "short", timeStyle: "short" }).format(new Date(task.expiresAt))}</small><button type="button" className="task-qr-button" onClick={() => showTaskQr(task)}>查看二维码</button></article>)}{!tasks.length && !error && <p className="muted">暂无提货任务</p>}</div>
   </div>;
 }
 
@@ -175,10 +186,27 @@ function UsersModule() {
   return <article className="panel simple-list">{users.map(user => <div key={user.id}><span className="avatar">{user.name[0]}</span><p><b>{user.name}</b><small>{user.email} · {user.active ? "启用" : "停用"}</small></p><select value={user.role} onChange={event => update(user, { role: event.target.value as Role })}>{Object.entries(roleLabels).map(([role, label]) => <option value={role} key={role}>{label}</option>)}</select><button onClick={() => update(user, { active: !user.active })}>{user.active ? "停用" : "启用"}</button></div>)}{error && <p className="form-error">{error}</p>}</article>;
 }
 
-type SettingsData = { warehouses: { id: string; name: string; location: string; bonded: boolean }[]; customers: { id: string; name: string; vehicleCount: number }[] };
+type SettingsData = { publicBaseUrl: string; warehouses: { id: string; name: string; location: string; bonded: boolean }[]; customers: { id: string; name: string; vehicleCount: number }[] };
 function SettingsModule() {
-  const [data, setData] = useState<SettingsData>({ warehouses: [], customers: [] });
+  const [data, setData] = useState<SettingsData>({ publicBaseUrl: "", warehouses: [], customers: [] });
   const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [saving, setSaving] = useState(false);
   useEffect(() => { fetch("/api/v1/settings").then(async response => { const result = await response.json(); if (!response.ok) throw new Error(result.message); setData(result.data); }).catch(reason => setError(reason.message || "无法读取基础设置")); }, []);
-  return <div><div className="module-cards"><article className="panel settings-card"><h3>仓库主数据</h3>{data.warehouses.map(warehouse => <p key={warehouse.id}><b>{warehouse.name}</b><br/>{warehouse.location} · {warehouse.bonded ? "保税仓" : "普通仓"}</p>)}</article><article className="panel settings-card"><h3>客户主数据</h3>{data.customers.map(customer => <p key={customer.id}><b>{customer.name}</b> · {customer.vehicleCount} 辆车</p>)}</article></div>{error && <p className="form-error">{error}</p>}</div>;
+  async function savePublicBaseUrl(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSaving(true); setError(""); setMessage("");
+    try {
+      const response = await fetch("/api/v1/settings", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ publicBaseUrl: data.publicBaseUrl }) });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || "保存失败");
+      setData(current => ({ ...current, publicBaseUrl: result.data.publicBaseUrl }));
+      setMessage("当前域名已保存，重新打开提货任务页后，新建和已有任务二维码都会使用该域名。");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "保存失败");
+    } finally {
+      setSaving(false);
+    }
+  }
+  return <div><div className="module-cards"><article className="panel settings-card settings-domain-card"><h3>提货链接当前域名</h3><p>用于生成司机签收链接和二维码，请填写司机手机能够访问的完整域名。</p><form className="settings-form" onSubmit={savePublicBaseUrl}><label>当前域名<input type="url" value={data.publicBaseUrl} onChange={event => setData(current => ({ ...current, publicBaseUrl: event.target.value }))} placeholder="https://cargo.example.com" required/></label><button className="primary-button" disabled={saving}>{saving ? "保存中…" : "保存域名"}</button></form>{message && <p className="form-success">{message}</p>}</article><article className="panel settings-card"><h3>仓库主数据</h3>{data.warehouses.map(warehouse => <p key={warehouse.id}><b>{warehouse.name}</b><br/>{warehouse.location} · {warehouse.bonded ? "保税仓" : "普通仓"}</p>)}</article><article className="panel settings-card"><h3>客户主数据</h3>{data.customers.map(customer => <p key={customer.id}><b>{customer.name}</b> · {customer.vehicleCount} 辆车</p>)}</article></div>{error && <p className="form-error">{error}</p>}</div>;
 }

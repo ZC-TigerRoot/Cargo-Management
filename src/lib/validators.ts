@@ -54,8 +54,7 @@ export const vehicleUpdateInput = vehiclePayload.and(z.object({
 });
 
 export const driverSubmission = z.object({
-  name: z.string().trim().min(2), phone: z.string().trim().min(6), plateNo: z.string().trim().min(2),
-  pickupAt: z.iso.datetime(), confirmed: z.literal(true), signature: z.string().trim().min(1).max(200),
-  photoDataUrl: z.string().startsWith("data:image/").max(7_000_000).optional(),
+  pickupAt: z.iso.datetime(),
+  photoDataUrl: z.string().startsWith("data:image/", "请上传有效的图片文件").max(7_000_000, "车辆照片不能超过 5 MB"),
   idempotencyKey: z.string().min(8),
 });

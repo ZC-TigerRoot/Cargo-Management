@@ -11,8 +11,17 @@
 .pickup-cards { grid-template-columns: repeat(2, 1fr); }
 .qr-result { display: grid; justify-items: center; gap: 8px; padding: 16px; background: #f4f7f5; border-radius: 10px; }
 .qr-result a { color: var(--green); font-size: 12px; font-weight: 700; }
-.qr-result p { margin: 0; color: var(--muted); font-size: 10px; }
+.qr-result p { margin: 0; color: var(--muted); font-size: 10px; max-width: 100%; overflow-wrap: anywhere; text-align: center; }
+.qr-result small { color: var(--muted); font-size: 10px; text-align: center; }
+.qr-actions { display: flex; gap: 16px; }
+.task-qr-button { border: 0; background: transparent; padding: 0; color: var(--green); font-size: 12px; font-weight: 700; cursor: pointer; }
 .simple-list select { border: 1px solid var(--line); border-radius: 7px; padding: 6px; font-size: 10px; background: white; }
+.settings-domain-card { grid-column: span 2; }
+.settings-form { display: grid; grid-template-columns: minmax(220px, 1fr) auto; align-items: end; gap: 10px; margin-top: 18px; }
+.settings-form label { color: #58635d; font-size: 11px; font-weight: 700; }
+.settings-form input { display: block; width: 100%; height: 43px; margin-top: 6px; padding: 0 11px; border: 1px solid var(--line); border-radius: 8px; outline: none; }
+.settings-form input:focus { border-color: #32745d; box-shadow: 0 0 0 3px #32745d15; }
+.form-success { color: #176348 !important; }
 
 @media (max-width: 900px) {
   .pickup-layout { grid-template-columns: 1fr; }
@@ -20,4 +29,6 @@
 
 @media (max-width: 760px) {
   .pickup-cards { grid-template-columns: 1fr; }
+  .settings-domain-card { grid-column: span 1; }
+  .settings-form { grid-template-columns: 1fr; }
 }

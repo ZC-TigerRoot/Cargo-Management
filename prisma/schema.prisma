@@ -138,13 +138,19 @@ model InventoryEvent {
 model PickupTask {
   id               String       @id @default(cuid())
   taskNo           String       @unique
-  tokenHash        String       @unique
+  token             String       @unique
   expiresAt        DateTime
   revokedAt        DateTime?
   submittedAt      DateTime?
   driverSubmission Json?
   items            PickupItem[]
   createdAt        DateTime     @default(now())
+}
+
+model SystemSetting {
+  id            String   @id @default("default")
+  publicBaseUrl String?
+  updatedAt     DateTime @updatedAt
 }
 
 model PickupItem {
