@@ -10,7 +10,7 @@ const credentials = z.object({
   password: z.string().min(8).max(128),
 });
 
-const roleNames = { WAREHOUSE: "warehouse", OPERATOR: "operator", VIEWER: "viewer", ADMIN: "admin" } as const;
+const roleNames = { WAREHOUSE: "warehouse", FORWARDER: "forwarder", CUSTOMER: "customer", ADMIN: "admin" } as const;
 
 export async function POST(req: NextRequest) {
   try {

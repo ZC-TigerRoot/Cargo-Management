@@ -6,20 +6,18 @@ import { prisma } from "@/lib/prisma";
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const MAX_ROWS = 10_000;
-const vinPattern = /^[A-HJ-NPR-Z0-9]{17}$/;
-
 const commonTail = [
   "商社通知放车时间", "出库提货明细", "库存天数", "客户交付签收单日期", "外代交付签收单给商社时间", "备注",
 ];
 const overseasHeaders = [
   "提单号", "车架号", "车型", "HS#", "起运港", "目的港", "船名航次", "ETD", "ETA", "保税仓地点",
-  "入保税仓库时间", "入库仓库名称", "所属客人", "商社通知放车时间", "客户通知做过户文件时间",
-  "客户通知放车时间", "出库提货明细", "实际出保税库时间", "库存天数", "出库通知单交付给商社日期",
+  "入保税仓库时间", "入库金额", "入库BOE号", "入库仓库名称", "所属客人", "商社通知放车时间", "客户通知做过户文件时间",
+  "客户通知放车时间", "出库提货明细", "实际出保税库时间", "出库BOE号", "BOE抬头", "出库金额", "库存天数", "出库通知单交付给商社日期",
   "客户交付签收单日期", "外代交付签收单给商社时间", "备注",
 ];
 const domesticHeaders = [
-  "车架号", "车型", "品牌", "生产商", "PO#", "仓库地点", "入仓库时间", "入库仓库名称", "所属客人",
-  ...commonTail.slice(0, 2), "实际出保税库时间", ...commonTail.slice(2, 3), "出库通知单交付给商社",
+  "车架号", "车型", "品牌", "生产商", "PO#", "仓库地点", "入仓库时间", "入库金额", "入库BOE号", "入库仓库名称", "所属客人",
+  ...commonTail.slice(0, 2), "实际出保税库时间", "出库BOE号", "BOE抬头", "出库金额", ...commonTail.slice(2, 3), "出库通知单交付给商社",
   ...commonTail.slice(3),
 ];
 
@@ -35,10 +33,6 @@ function cellDate(value: unknown) {
   }
   return undefined;
 }
-
-const requiredText = (row: Record<string, unknown>, header: string, errors: string[]) => {
-  if (!String(row[header] ?? "").trim()) errors.push(`缺少${header}`);
-};
 
 export async function POST(req: NextRequest) {
   try {
@@ -68,23 +62,16 @@ export async function POST(req: NextRequest) {
     if (overseas === domestic) return NextResponse.json({ error: "UNKNOWN_TEMPLATE", message: "模板必须且只能包含“提单号”或“PO#”列" }, { status: 422 });
     const expected = overseas ? overseasHeaders : domesticHeaders;
     const missingHeaders = expected.filter(header => !headers.includes(header));
-    if (missingHeaders.length) {
-      return NextResponse.json({ error: "MISSING_HEADERS", message: `模板缺少必需列：${missingHeaders.join("、")}`, data: { missingHeaders } }, { status: 422 });
-    }
+    const normalizedRows = rows.map(row => Object.fromEntries(expected.map(header => [header, row[header] ?? ""])));
 
     const seenVins = new Set<string>();
-    const checked = rows.map((row, index) => {
+    const checked = normalizedRows.map((row, index) => {
       const errors: string[] = [];
       const vin = String(row["车架号"] ?? "").trim().toUpperCase();
       if (!vin) errors.push("缺少车架号");
-      else if (!vinPattern.test(vin)) errors.push("车架号必须为 17 位且不能包含 I、O、Q");
+      else if (vin.length > 100) errors.push("车架号不能超过 100 个字符");
       else if (seenVins.has(vin)) errors.push("文件内车架号重复");
       if (vin) seenVins.add(vin);
-      requiredText(row, "车型", errors);
-      requiredText(row, overseas ? "提单号" : "PO#", errors);
-      requiredText(row, overseas ? "保税仓地点" : "仓库地点", errors);
-      requiredText(row, "入库仓库名称", errors);
-      requiredText(row, "所属客人", errors);
 
       const inboundHeader = overseas ? "入保税仓库时间" : "入仓库时间";
       const outboundHeader = "实际出保税库时间";
@@ -93,6 +80,11 @@ export async function POST(req: NextRequest) {
       if (row[inboundHeader] && !inbound) errors.push("入库时间格式无效");
       if (row[outboundHeader] && !outbound) errors.push("实际出库时间格式无效");
       if (inbound && outbound && inbound > outbound) errors.push("入库时间晚于实际出库时间");
+      for (const amountHeader of ["入库金额", "出库金额"]) {
+        const value = row[amountHeader];
+        if (value !== null && value !== undefined && String(value).trim() &&
+          (!/^\d{1,16}(?:\.\d{1,2})?$/.test(String(value).trim()) || Number(value) < 0)) errors.push(`${amountHeader}格式无效`);
+      }
       if (overseas) {
         const etd = cellDate(row.ETD);
         const eta = cellDate(row.ETA);
@@ -103,7 +95,7 @@ export async function POST(req: NextRequest) {
       return { row: index + 2, vin, referenceNo: String(row[overseas ? "提单号" : "PO#"] ?? "").trim(), errors };
     });
 
-    const vins = checked.map(item => item.vin).filter(vin => vinPattern.test(vin));
+    const vins = checked.map(item => item.vin).filter(Boolean);
     const existing = vins.length ? await prisma.vehicle.findMany({
       where: { vin: { in: vins } },
       select: { vin: true, batch: { select: { type: true, referenceNo: true } } },
@@ -124,7 +116,7 @@ export async function POST(req: NextRequest) {
       totalRows: rows.length,
       validRows: rows.length - invalid.length,
       invalidRows: invalid.length,
-      missingHeaders: [],
+      missingHeaders,
       errors: invalid.slice(0, 100).map(({ row, vin, errors }) => ({ row, vin, errors })),
     } });
   } catch (error) {

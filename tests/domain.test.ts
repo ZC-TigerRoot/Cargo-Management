@@ -6,10 +6,10 @@ import { localInputValue, zonedLocalToIso } from "../src/lib/datetime";
 describe("库存领域规则", () => {
   it("出库后库存天数固定", () => expect(inventoryDays("2026-07-01T00:00:00Z", "2026-07-11T00:00:00Z", new Date("2026-08-01"))).toBe(10));
   it("在库天数按当前时间计算", () => expect(inventoryDays("2026-07-01T00:00:00Z", undefined, new Date("2026-07-03T00:00:00Z"))).toBe(2));
-  it("只允许操作管理导出", () => {
-    expect(can("operator", "export")).toBe(true);
+  it("货代和管理员可导出，客户与仓管不可导出", () => {
+    expect(can("forwarder", "export")).toBe(true);
     expect(can("warehouse", "export")).toBe(false);
-    expect(can("viewer", "export")).toBe(false);
+    expect(can("customer", "export")).toBe(false);
   });
   it("事件推导状态", () => expect(transitions.DRIVER_SIGNED).toBe("已完成"));
 });
@@ -37,7 +37,7 @@ describe("车辆录入校验", () => {
     referenceNo: "BL-2026-0712",
     warehouseLocation: "Dubai Logistics District",
     warehouse: "迪拜杰贝阿里保税仓",
-    warehouseTimezone: "Asia/Dubai",
+    warehouseTimezone: "Asia/Shanghai",
     customer: "海湾汽车贸易",
     idempotencyKey: "test-request-001",
   };
@@ -101,12 +101,25 @@ describe("车辆录入校验", () => {
     const result = vehicleInput.parse({ ...base, vin: "l6t79s2e8ra102847" });
     expect(result.vin).toBe("L6T79S2E8RA102847");
   });
+
+  it("接受非 17 位车架号及新的出入库字段", () => {
+    const result = vehicleInput.safeParse({
+      ...base,
+      vin: "TEST-CHASSIS-001",
+      inboundAmount: "1200.50",
+      inboundBoeNo: "BOE-IN-001",
+      outboundBoeNo: "BOE-OUT-001",
+      outboundBoeTitle: "测试客户",
+      outboundAmount: "1350.00",
+    });
+    expect(result.success).toBe(true);
+  });
 });
 
-describe("仓库时区", () => {
-  it("按迪拜当地时间解释录入值", () => {
-    const instant = zonedLocalToIso("2026-07-14T09:30", "Asia/Dubai");
-    expect(instant).toBe("2026-07-14T05:30:00.000Z");
-    expect(localInputValue(instant, "Asia/Dubai")).toBe("2026-07-14T09:30");
+describe("系统时区", () => {
+  it("统一按中国标准时间解释录入值", () => {
+    const instant = zonedLocalToIso("2026-07-14T09:30", "Asia/Shanghai");
+    expect(instant).toBe("2026-07-14T01:30:00.000Z");
+    expect(localInputValue(instant, "Asia/Shanghai")).toBe("2026-07-14T09:30");
   });
 });

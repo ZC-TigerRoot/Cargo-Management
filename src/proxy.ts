@@ -20,8 +20,11 @@ export async function proxy(req: NextRequest) {
     return NextResponse.redirect(login);
   }
 
-  if ((pathname.startsWith("/users") || pathname.startsWith("/settings")) && session.role !== "admin") {
+  if ((pathname.startsWith("/users") || pathname.startsWith("/settings")) && !["admin", "forwarder"].includes(session.role)) {
     return NextResponse.redirect(new URL("/", req.url));
+  }
+  if (session.role === "customer" && (pathname.startsWith("/pickups") || pathname.startsWith("/imports"))) {
+    return NextResponse.redirect(new URL("/vehicles", req.url));
   }
   return NextResponse.next();
 }

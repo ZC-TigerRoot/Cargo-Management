@@ -1,6 +1,6 @@
 import { EventType, VehicleStatus as PrismaVehicleStatus, type Prisma } from "@prisma/client";
-import type { VehicleEventRecord, VehicleRecord, VehicleStatus as DomainVehicleStatus } from "./domain";
-import { defaultWarehouseTimezone } from "./datetime";
+import type { VehicleAuditRecord, VehicleEventRecord, VehicleRecord, VehicleStatus as DomainVehicleStatus } from "./domain";
+import { CHINA_TIME_ZONE } from "./datetime";
 import { prisma } from "./prisma";
 import type { z } from "zod";
 import type { vehiclePayload, vehicleUpdateInput } from "./validators";
@@ -110,7 +110,7 @@ function eventHistory(vehicle: VehicleWithRelations): VehicleEventRecord[] {
       title: cleared ? `撤销：${eventTitles[correctedType]}` : eventTitles[event.type],
       occurredAt: event.occurredAt.toISOString(),
       recordedAt: event.createdAt.toISOString(),
-      actor: event.actor?.name,
+      actor: event.actor?.name ?? (typeof payload.actorLabel === "string" ? payload.actorLabel : undefined),
       correctionOfId: event.correctionOfId ?? undefined,
       reason: typeof payload.reason === "string" ? payload.reason : cleared ? "清空错误的业务时间" : undefined,
     };
@@ -119,7 +119,6 @@ function eventHistory(vehicle: VehicleWithRelations): VehicleEventRecord[] {
 
 export function toVehicleRecord(vehicle: VehicleWithRelations): VehicleRecord {
   const type = vehicle.batch?.type === "DOMESTIC" ? "domestic" : "overseas";
-  const extra = jsonObject(vehicle.extra);
   return {
     id: vehicle.id,
     version: vehicle.version,
@@ -137,15 +136,20 @@ export function toVehicleRecord(vehicle: VehicleWithRelations): VehicleRecord {
     manufacturer: vehicle.batch?.manufacturer ?? undefined,
     warehouseLocation: vehicle.warehouse?.location ?? "",
     warehouse: vehicle.warehouse?.name ?? "",
-    warehouseTimezone: typeof extra.warehouseTimezone === "string" ? extra.warehouseTimezone : defaultWarehouseTimezone(type),
+    warehouseTimezone: CHINA_TIME_ZONE,
     customer: vehicle.customer?.name ?? "",
     status: statusNames[vehicle.status] ?? "待入库",
     inboundAt: vehicle.inboundAt?.toISOString(),
+    inboundAmount: vehicle.inboundAmount?.toFixed(2),
+    inboundBoeNo: vehicle.inboundBoeNo ?? undefined,
     merchantReleaseAt: effectiveEventAt(vehicle, "merchantReleaseAt"),
     transferDocNoticeAt: effectiveEventAt(vehicle, "transferDocNoticeAt"),
     customerReleaseAt: effectiveEventAt(vehicle, "customerReleaseAt"),
     pickupDetails: vehicle.pickupDetails ?? undefined,
     outboundAt: vehicle.outboundAt?.toISOString(),
+    outboundBoeNo: vehicle.outboundBoeNo ?? undefined,
+    outboundBoeTitle: vehicle.outboundBoeTitle ?? undefined,
+    outboundAmount: vehicle.outboundAmount?.toFixed(2),
     outboundNoticeDeliveredAt: effectiveEventAt(vehicle, "outboundNoticeDeliveredAt"),
     customerReceiptDeliveredAt: effectiveEventAt(vehicle, "customerReceiptDeliveredAt"),
     agentReceiptDeliveredAt: effectiveEventAt(vehicle, "agentReceiptDeliveredAt"),
@@ -164,8 +168,13 @@ function prismaStatus(data: VehiclePayload): PrismaVehicleStatus {
   return "PENDING_INBOUND";
 }
 
-async function upsertRelations(tx: Prisma.TransactionClient, data: VehiclePayload) {
+async function upsertRelations(tx: Prisma.TransactionClient, data: VehiclePayload, context: MutationContext) {
   const type = data.type === "overseas" ? "OVERSEAS" : "DOMESTIC";
+  const [batchBefore, customerBefore, warehouseBefore] = await Promise.all([
+    tx.businessBatch.findUnique({ where: { type_referenceNo: { type, referenceNo: data.referenceNo } } }),
+    tx.customer.findUnique({ where: { name: data.customer } }),
+    tx.warehouse.findUnique({ where: { name_location: { name: data.warehouse, location: data.warehouseLocation } } }),
+  ]);
   const [batch, customer, warehouse] = await Promise.all([
     tx.businessBatch.upsert({
       where: { type_referenceNo: { type, referenceNo: data.referenceNo } },
@@ -195,6 +204,37 @@ async function upsertRelations(tx: Prisma.TransactionClient, data: VehiclePayloa
       update: { bonded: data.type === "overseas" },
     }),
   ]);
+
+  const batchSnapshot = (value: typeof batch) => ({
+    type: value.type,
+    referenceNo: value.referenceNo,
+    portOfLoad: value.portOfLoad,
+    portOfDischarge: value.portOfDischarge,
+    vesselVoyage: value.vesselVoyage,
+    etd: value.etd?.toISOString() ?? null,
+    eta: value.eta?.toISOString() ?? null,
+    manufacturer: value.manufacturer,
+  });
+  const customerSnapshot = (value: typeof customer) => ({ name: value.name });
+  const warehouseSnapshot = (value: typeof warehouse) => ({ name: value.name, location: value.location, bonded: value.bonded });
+  const masterAudits = [
+    { before: batchBefore ? batchSnapshot(batchBefore) : undefined, after: batchSnapshot(batch), entityType: "BusinessBatch", entityId: batch.id, action: batchBefore ? "BATCH_UPDATED" : "BATCH_CREATED" },
+    { before: customerBefore ? customerSnapshot(customerBefore) : undefined, after: customerSnapshot(customer), entityType: "Customer", entityId: customer.id, action: customerBefore ? "CUSTOMER_UPDATED" : "CUSTOMER_CREATED" },
+    { before: warehouseBefore ? warehouseSnapshot(warehouseBefore) : undefined, after: warehouseSnapshot(warehouse), entityType: "Warehouse", entityId: warehouse.id, action: warehouseBefore ? "WAREHOUSE_UPDATED" : "WAREHOUSE_CREATED" },
+  ].filter(audit => !audit.before || JSON.stringify(audit.before) !== JSON.stringify(audit.after));
+  for (const audit of masterAudits) {
+    await tx.auditLog.create({
+      data: {
+        actorId: context.actorId,
+        action: audit.action,
+        entityType: audit.entityType,
+        entityId: audit.entityId,
+        before: audit.before,
+        after: audit.after,
+        ip: context.ip,
+      },
+    });
+  }
   return { batch, customer, warehouse };
 }
 
@@ -206,6 +246,7 @@ function datedEvents(data: VehiclePayload, actorId?: string) {
 function auditSnapshot(record: VehicleRecord): Prisma.InputJsonValue {
   const snapshot = { ...record };
   delete snapshot.history;
+  delete snapshot.auditTrail;
   return JSON.parse(JSON.stringify(snapshot)) as Prisma.InputJsonValue;
 }
 
@@ -217,7 +258,7 @@ export async function createVehicle(data: VehiclePayload, idempotencyKey: string
     });
     if (previous) return previous.vehicle;
 
-    const { batch, customer, warehouse } = await upsertRelations(tx, data);
+    const { batch, customer, warehouse } = await upsertRelations(tx, data, context);
     const vehicle = await tx.vehicle.create({
       data: {
         vin: data.vin,
@@ -226,10 +267,15 @@ export async function createVehicle(data: VehiclePayload, idempotencyKey: string
         hsCode: data.hsCode,
         status: prismaStatus(data),
         inboundAt: data.inboundAt ? new Date(data.inboundAt) : undefined,
+        inboundAmount: data.inboundAmount,
+        inboundBoeNo: data.inboundBoeNo,
         outboundAt: data.outboundAt ? new Date(data.outboundAt) : undefined,
+        outboundBoeNo: data.outboundBoeNo,
+        outboundBoeTitle: data.outboundBoeTitle,
+        outboundAmount: data.outboundAmount,
         pickupDetails: data.pickupDetails,
         notes: data.notes,
-        extra: { warehouseTimezone: data.warehouseTimezone },
+        extra: { warehouseTimezone: CHINA_TIME_ZONE },
         batchId: batch.id,
         customerId: customer.id,
         warehouseId: warehouse.id,
@@ -293,9 +339,9 @@ export async function updateVehicle(id: string, expectedVersion: number, data: V
     const existing = await tx.vehicle.findUniqueOrThrow({ where: { id }, include: vehicleInclude });
     if (existing.version !== expectedVersion) throw new VersionConflictError();
     const before = toVehicleRecord(existing);
-    const { batch, customer, warehouse } = await upsertRelations(tx, data);
+    const { batch, customer, warehouse } = await upsertRelations(tx, data, context);
     const nextStatus = data.status ? statusCodes[data.status] : existing.status;
-    const extra = { ...jsonObject(existing.extra), warehouseTimezone: data.warehouseTimezone } as Prisma.InputJsonObject;
+    const extra = { ...jsonObject(existing.extra), warehouseTimezone: CHINA_TIME_ZONE } as Prisma.InputJsonObject;
     const result = await tx.vehicle.updateMany({
       where: { id, version: expectedVersion },
       data: {
@@ -305,7 +351,12 @@ export async function updateVehicle(id: string, expectedVersion: number, data: V
         hsCode: data.hsCode ?? null,
         status: nextStatus,
         inboundAt: data.inboundAt ? new Date(data.inboundAt) : null,
+        inboundAmount: data.inboundAmount ?? null,
+        inboundBoeNo: data.inboundBoeNo ?? null,
         outboundAt: data.outboundAt ? new Date(data.outboundAt) : null,
+        outboundBoeNo: data.outboundBoeNo ?? null,
+        outboundBoeTitle: data.outboundBoeTitle ?? null,
+        outboundAmount: data.outboundAmount ?? null,
         pickupDetails: data.pickupDetails ?? null,
         notes: data.notes ?? null,
         extra,
@@ -346,20 +397,97 @@ export async function updateVehicle(id: string, expectedVersion: number, data: V
   });
 }
 
-export async function listVehicles({ id, q }: { id?: string; q?: string } = {}) {
+export async function listVehicles({ id, q, scope }: { id?: string; q?: string; scope?: Prisma.VehicleWhereInput } = {}) {
   return prisma.vehicle.findMany({
     where: {
+      ...scope,
       ...(id ? { id } : {}),
       ...(q ? {
         OR: [
           { vin: { contains: q, mode: "insensitive" as const } },
           { model: { contains: q, mode: "insensitive" as const } },
+          { inboundBoeNo: { contains: q, mode: "insensitive" as const } },
+          { outboundBoeNo: { contains: q, mode: "insensitive" as const } },
+          { outboundBoeTitle: { contains: q, mode: "insensitive" as const } },
           { batch: { referenceNo: { contains: q, mode: "insensitive" as const } } },
           { customer: { name: { contains: q, mode: "insensitive" as const } } },
+          { warehouse: { name: { contains: q, mode: "insensitive" as const } } },
         ],
       } : {}),
     },
     include: vehicleInclude,
     orderBy: { updatedAt: "desc" },
+  });
+}
+
+const auditFieldLabels: Record<string, string> = {
+  vin: "车架号",
+  model: "车型",
+  brand: "品牌",
+  type: "业务类型",
+  referenceNo: "提单号 / PO#",
+  hsCode: "HS#",
+  portOfLoad: "起运港",
+  portOfDischarge: "目的港",
+  vesselVoyage: "船名航次",
+  etd: "ETD",
+  eta: "ETA",
+  manufacturer: "生产商",
+  warehouseLocation: "仓库地点",
+  warehouse: "仓库",
+  customer: "所属客户",
+  status: "车辆状态",
+  inboundAt: "入库时间",
+  inboundAmount: "入库金额",
+  inboundBoeNo: "入库 BOE 号",
+  merchantReleaseAt: "商社通知放车时间",
+  transferDocNoticeAt: "客户通知做过户文件时间",
+  customerReleaseAt: "客户通知放车时间",
+  pickupDetails: "出库提货明细",
+  outboundAt: "实际出库时间",
+  outboundBoeNo: "出库 BOE 号",
+  outboundBoeTitle: "BOE 抬头",
+  outboundAmount: "出库金额",
+  outboundNoticeDeliveredAt: "出库通知单交付时间",
+  customerReceiptDeliveredAt: "客户签收单交付时间",
+  agentReceiptDeliveredAt: "外代签收单交付时间",
+  notes: "备注",
+};
+
+function auditText(value: Prisma.JsonValue | undefined) {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+export async function listVehicleAuditTrail(vehicleId: string): Promise<VehicleAuditRecord[]> {
+  const audits = await prisma.auditLog.findMany({
+    where: { entityType: "Vehicle", entityId: vehicleId },
+    include: { actor: { select: { name: true } } },
+    orderBy: { createdAt: "asc" },
+  });
+  return audits.map(audit => {
+    const before = jsonObject(audit.before ?? undefined);
+    const after = jsonObject(audit.after ?? undefined);
+    const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+    const changes = [...keys]
+      .filter(field => field in auditFieldLabels)
+      .filter(field => JSON.stringify(before[field]) !== JSON.stringify(after[field]))
+      .map(field => ({
+        field,
+        label: auditFieldLabels[field],
+        before: auditText(before[field]),
+        after: auditText(after[field]),
+      }));
+    return {
+      id: audit.id,
+      action: audit.action === "VEHICLE_CREATED" ? "创建车辆档案"
+        : audit.action === "PICKUP_CREATED" ? "创建提货任务并更新状态"
+          : audit.action === "PICKUP_SIGNED" ? "司机签收并更新状态"
+            : "修改车辆数据",
+      actor: audit.actor?.name ?? audit.actorLabel ?? "系统",
+      changedAt: audit.createdAt.toISOString(),
+      changes,
+    };
   });
 }

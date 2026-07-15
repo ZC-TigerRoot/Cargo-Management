@@ -1,6 +1,5 @@
-import type { BusinessType } from "./domain";
-
-export const defaultWarehouseTimezone = (type: BusinessType) => type === "overseas" ? "Asia/Dubai" : "Asia/Shanghai";
+export const CHINA_TIME_ZONE = "Asia/Shanghai";
+export const defaultWarehouseTimezone = () => CHINA_TIME_ZONE;
 
 export function isTimeZone(value: string) {
   try {
@@ -44,7 +43,20 @@ export function zonedLocalToIso(value: string, timeZone: string) {
   return new Date(instant).toISOString();
 }
 
-export function businessDate(value: string | undefined, timeZone: string) {
-  const local = localInputValue(value, timeZone);
-  return local ? `${local.replace("T", " ")} (${timeZone})` : "";
+export function businessDate(value: string | undefined, timeZone = CHINA_TIME_ZONE) {
+  void timeZone;
+  const local = localInputValue(value, CHINA_TIME_ZONE);
+  return local ? `${local.replace("T", " ")}（中国标准时间）` : "";
+}
+
+export function chinaDateTime(value: string | Date) {
+  return new Intl.DateTimeFormat("zh-CN", {
+    timeZone: CHINA_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(typeof value === "string" ? new Date(value) : value);
 }

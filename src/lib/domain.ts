@@ -1,6 +1,6 @@
-export type Role = "warehouse" | "operator" | "viewer" | "admin";
+export type Role = "warehouse" | "forwarder" | "customer" | "admin";
 export const roleLabels: Record<Role, string> = {
-  warehouse: "仓管员", operator: "货代 / 操作管理", viewer: "经理 / 业务", admin: "系统管理员",
+  warehouse: "仓管", forwarder: "货代", customer: "客户", admin: "管理员",
 };
 export type BusinessType = "overseas" | "domestic";
 export const vehicleStatuses = ["待入库", "在库", "待放车", "待提货", "已出库", "待签收", "已完成", "异常"] as const;
@@ -27,17 +27,23 @@ export type VehicleRecord = {
   customer: string;
   status: VehicleStatus;
   inboundAt?: string;
+  inboundAmount?: string;
+  inboundBoeNo?: string;
   merchantReleaseAt?: string;
   transferDocNoticeAt?: string;
   customerReleaseAt?: string;
   pickupDetails?: string;
   outboundAt?: string;
+  outboundBoeNo?: string;
+  outboundBoeTitle?: string;
+  outboundAmount?: string;
   outboundNoticeDeliveredAt?: string;
   customerReceiptDeliveredAt?: string;
   agentReceiptDeliveredAt?: string;
   updatedAt: string;
   notes?: string;
   history?: VehicleEventRecord[];
+  auditTrail?: VehicleAuditRecord[];
 };
 
 export type VehicleEventRecord = {
@@ -49,6 +55,21 @@ export type VehicleEventRecord = {
   actor?: string;
   correctionOfId?: string;
   reason?: string;
+};
+
+export type VehicleAuditChange = {
+  field: string;
+  label: string;
+  before?: string;
+  after?: string;
+};
+
+export type VehicleAuditRecord = {
+  id: string;
+  action: string;
+  actor: string;
+  changedAt: string;
+  changes: VehicleAuditChange[];
 };
 
 export type VehicleFormValues = Omit<VehicleRecord, "id" | "version" | "status" | "updatedAt" | "history">;
@@ -64,10 +85,14 @@ export function inventoryDays(inboundAt?: string, outboundAt?: string, now = new
   return Math.max(0, Math.ceil((end.getTime() - new Date(inboundAt).getTime()) / 86_400_000));
 }
 
-export const can = (role: Role, action: "view" | "create" | "correct" | "export" | "manageUsers") => {
+export type Permission = "view" | "create" | "correct" | "export" | "coordinatePickups" | "manageUsers" | "manageSettings";
+
+export const can = (role: Role, action: Permission) => {
   const grants: Record<Role, string[]> = {
-    warehouse: ["view", "create"], operator: ["view", "create", "correct", "export"],
-    viewer: ["view"], admin: ["view", "create", "correct", "export", "manageUsers"],
+    warehouse: ["view", "create", "correct", "coordinatePickups"],
+    forwarder: ["view", "create", "correct", "export", "coordinatePickups", "manageUsers", "manageSettings"],
+    customer: ["view"],
+    admin: ["view", "create", "correct", "export", "coordinatePickups", "manageUsers", "manageSettings"],
   };
   return grants[role].includes(action);
 };

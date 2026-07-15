@@ -2,12 +2,10 @@ import "server-only";
 
 import { cookies } from "next/headers";
 import type { NextRequest } from "next/server";
-import type { Role as PrismaRole } from "@prisma/client";
-import { can, type Role } from "./domain";
+import type { Prisma, Role as PrismaRole } from "@prisma/client";
+import { can, type Permission, type Role } from "./domain";
 import { prisma } from "./prisma";
 import { SESSION_COOKIE, verifySession } from "./session";
-
-export type Permission = "view" | "create" | "correct" | "export" | "manageUsers";
 
 export class AuthorizationError extends Error {
   constructor(public status: 401 | 403, message: string) {
@@ -17,9 +15,17 @@ export class AuthorizationError extends Error {
 
 const roleNames: Record<PrismaRole, Role> = {
   WAREHOUSE: "warehouse",
-  OPERATOR: "operator",
-  VIEWER: "viewer",
+  FORWARDER: "forwarder",
+  CUSTOMER: "customer",
   ADMIN: "admin",
+};
+
+export type AccessUser = {
+  id: string;
+  name: string;
+  roleName: Role;
+  customerId: string | null;
+  warehouseScopes: { warehouseId: string }[];
 };
 
 export async function requireUser(permission: Permission) {
@@ -27,11 +33,41 @@ export async function requireUser(permission: Permission) {
   const session = await verifySession(token);
   if (!session) throw new AuthorizationError(401, "请先登录");
 
-  const user = await prisma.user.findUnique({ where: { id: session.userId } });
+  const user = await prisma.user.findUnique({
+    where: { id: session.userId },
+    include: { warehouseScopes: { select: { warehouseId: true } } },
+  });
   if (!user?.active) throw new AuthorizationError(401, "账号已停用或不存在");
   const role = roleNames[user.role];
   if (!can(role, permission)) throw new AuthorizationError(403, "当前账号没有执行此操作的权限");
   return { ...user, roleName: role };
+}
+
+export function vehicleScopeWhere(user: AccessUser): Prisma.VehicleWhereInput {
+  if (user.roleName === "customer") return { customerId: user.customerId ?? "__unassigned_customer__" };
+  if (user.roleName === "warehouse") return { warehouseId: { in: user.warehouseScopes.map(scope => scope.warehouseId) } };
+  return {};
+}
+
+export function pickupTaskScopeWhere(user: AccessUser): Prisma.PickupTaskWhereInput {
+  const vehicle = vehicleScopeWhere(user);
+  return Object.keys(vehicle).length ? { items: { some: { vehicle }, every: { vehicle } } } : {};
+}
+
+export async function requireVehicleInScope(user: AccessUser, vehicleId: string) {
+  const vehicle = await prisma.vehicle.findFirst({ where: { id: vehicleId, ...vehicleScopeWhere(user) }, select: { id: true } });
+  if (!vehicle) throw new AuthorizationError(403, "当前账号不能访问或修改该车辆");
+}
+
+export async function requirePayloadWarehouseInScope(user: AccessUser, warehouseName: string, warehouseLocation: string) {
+  if (user.roleName !== "warehouse") return;
+  const warehouse = await prisma.warehouse.findUnique({
+    where: { name_location: { name: warehouseName, location: warehouseLocation } },
+    select: { id: true },
+  });
+  if (!warehouse || !user.warehouseScopes.some(scope => scope.warehouseId === warehouse.id)) {
+    throw new AuthorizationError(403, "仓管只能录入或修改已分配仓库的数据");
+  }
 }
 
 export function assertSameOrigin(req: NextRequest) {

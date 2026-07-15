@@ -2,13 +2,13 @@ import { NextResponse } from "next/server";
 import * as XLSX from "xlsx";
 import { inventoryDays } from "@/lib/domain";
 import { businessDate } from "@/lib/datetime";
-import { AuthorizationError, requireUser } from "@/lib/auth";
+import { AuthorizationError, requireUser, vehicleScopeWhere } from "@/lib/auth";
 import { listVehicles, toVehicleRecord } from "@/lib/vehicle-repository";
 
 export async function GET() {
   try {
-    await requireUser("export");
-    const vehicles = (await listVehicles()).map(toVehicleRecord);
+    const user = await requireUser("export");
+    const vehicles = (await listVehicles({ scope: vehicleScopeWhere(user) })).map(toVehicleRecord);
     const overseas = vehicles.filter(vehicle => vehicle.type === "overseas").map(vehicle => ({
       提单号: vehicle.referenceNo,
       车架号: vehicle.vin,
@@ -21,6 +21,8 @@ export async function GET() {
       ETA: businessDate(vehicle.eta, vehicle.warehouseTimezone),
       保税仓地点: vehicle.warehouseLocation,
       入保税仓库时间: businessDate(vehicle.inboundAt, vehicle.warehouseTimezone),
+      入库金额: vehicle.inboundAmount,
+      "入库BOE号": vehicle.inboundBoeNo,
       入库仓库名称: vehicle.warehouse,
       所属客人: vehicle.customer,
       商社通知放车时间: businessDate(vehicle.merchantReleaseAt, vehicle.warehouseTimezone),
@@ -28,6 +30,9 @@ export async function GET() {
       客户通知放车时间: businessDate(vehicle.customerReleaseAt, vehicle.warehouseTimezone),
       出库提货明细: vehicle.pickupDetails,
       实际出保税库时间: businessDate(vehicle.outboundAt, vehicle.warehouseTimezone),
+      "出库BOE号": vehicle.outboundBoeNo,
+      "BOE抬头": vehicle.outboundBoeTitle,
+      出库金额: vehicle.outboundAmount,
       库存天数: inventoryDays(vehicle.inboundAt, vehicle.outboundAt),
       出库通知单交付给商社日期: businessDate(vehicle.outboundNoticeDeliveredAt, vehicle.warehouseTimezone),
       客户交付签收单日期: businessDate(vehicle.customerReceiptDeliveredAt, vehicle.warehouseTimezone),
@@ -42,11 +47,16 @@ export async function GET() {
       "PO#": vehicle.referenceNo,
       仓库地点: vehicle.warehouseLocation,
       入仓库时间: businessDate(vehicle.inboundAt, vehicle.warehouseTimezone),
+      入库金额: vehicle.inboundAmount,
+      "入库BOE号": vehicle.inboundBoeNo,
       入库仓库名称: vehicle.warehouse,
       所属客人: vehicle.customer,
       商社通知放车时间: businessDate(vehicle.merchantReleaseAt, vehicle.warehouseTimezone),
       出库提货明细: vehicle.pickupDetails,
       实际出保税库时间: businessDate(vehicle.outboundAt, vehicle.warehouseTimezone),
+      "出库BOE号": vehicle.outboundBoeNo,
+      "BOE抬头": vehicle.outboundBoeTitle,
+      出库金额: vehicle.outboundAmount,
       库存天数: inventoryDays(vehicle.inboundAt, vehicle.outboundAt),
       出库通知单交付给商社: businessDate(vehicle.outboundNoticeDeliveredAt, vehicle.warehouseTimezone),
       客户交付签收单日期: businessDate(vehicle.customerReceiptDeliveredAt, vehicle.warehouseTimezone),

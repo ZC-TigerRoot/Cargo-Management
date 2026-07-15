@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { vehicleInput, vehicleUpdateInput } from "@/lib/validators";
-import { createVehicle, listVehicles, toVehicleRecord, updateVehicle, VersionConflictError } from "@/lib/vehicle-repository";
-import { assertSameOrigin, AuthorizationError, requestIp, requireUser } from "@/lib/auth";
+import { createVehicle, listVehicleAuditTrail, listVehicles, toVehicleRecord, updateVehicle, VersionConflictError } from "@/lib/vehicle-repository";
+import { assertSameOrigin, AuthorizationError, requestIp, requirePayloadWarehouseInScope, requireUser, requireVehicleInScope, vehicleScopeWhere } from "@/lib/auth";
 
 function apiError(error: unknown) {
   if (error instanceof AuthorizationError) {
@@ -24,12 +24,17 @@ function apiError(error: unknown) {
 
 export async function GET(req: NextRequest) {
   try {
-    await requireUser("view");
+    const user = await requireUser("view");
     const id = req.nextUrl.searchParams.get("id") || undefined;
     const q = req.nextUrl.searchParams.get("q")?.trim().slice(0, 100) || undefined;
-    const rows = await listVehicles({ id, q });
+    const rows = await listVehicles({ id, q, scope: vehicleScopeWhere(user) });
     if (id && !rows.length) return NextResponse.json({ error: "NOT_FOUND" }, { status: 404 });
-    return NextResponse.json({ data: id ? toVehicleRecord(rows[0]) : rows.map(toVehicleRecord), meta: { total: rows.length } });
+    if (id) {
+      const record = toVehicleRecord(rows[0]);
+      record.auditTrail = await listVehicleAuditTrail(id);
+      return NextResponse.json({ data: record, meta: { total: 1 } });
+    }
+    return NextResponse.json({ data: rows.map(toVehicleRecord), meta: { total: rows.length } });
   } catch (error) {
     return apiError(error);
   }
@@ -42,6 +47,7 @@ export async function POST(req: NextRequest) {
     const parsed = vehicleInput.safeParse(await req.json());
     if (!parsed.success) return NextResponse.json({ error: "VALIDATION_ERROR", issues: parsed.error.flatten() }, { status: 422 });
     const { idempotencyKey, ...data } = parsed.data;
+    await requirePayloadWarehouseInScope(user, data.warehouse, data.warehouseLocation);
     const vehicle = await createVehicle(data, idempotencyKey, { actorId: user.id, ip: requestIp(req) });
     return NextResponse.json({ data: toVehicleRecord(vehicle), audit: { action: "VEHICLE_CREATED", actor: user.name } }, { status: 201 });
   } catch (error) {
@@ -56,6 +62,8 @@ export async function PATCH(req: NextRequest) {
     const parsed = vehicleUpdateInput.safeParse(await req.json());
     if (!parsed.success) return NextResponse.json({ error: "VALIDATION_ERROR", issues: parsed.error.flatten() }, { status: 422 });
     const { id, version, ...data } = parsed.data;
+    await requireVehicleInScope(user, id);
+    await requirePayloadWarehouseInScope(user, data.warehouse, data.warehouseLocation);
     const vehicle = await updateVehicle(id, version, data, { actorId: user.id, ip: requestIp(req) });
     return NextResponse.json({ data: toVehicleRecord(vehicle), audit: { action: "VEHICLE_UPDATED", actor: user.name } });
   } catch (error) {

@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
-import { AuthorizationError, requireUser } from "@/lib/auth";
+import { AuthorizationError, requireUser, vehicleScopeWhere } from "@/lib/auth";
 import { listVehicles, toVehicleRecord } from "@/lib/vehicle-repository";
+import { CHINA_TIME_ZONE } from "@/lib/datetime";
 
 export async function GET() {
   try {
-    await requireUser("view");
-    const vehicles = (await listVehicles()).map(toVehicleRecord);
+    const user = await requireUser("view");
+    const vehicles = (await listVehicles({ scope: vehicleScopeWhere(user) })).map(toVehicleRecord);
     return NextResponse.json({ data: {
       total: vehicles.length,
       inStock: vehicles.filter(vehicle => vehicle.status === "在库").length,
@@ -13,7 +14,7 @@ export async function GET() {
       exceptions: vehicles.filter(vehicle => vehicle.status === "异常").length,
       outboundToday: vehicles.filter(vehicle => {
         if (!vehicle.outboundAt) return false;
-        const formatter = new Intl.DateTimeFormat("en-CA", { timeZone: vehicle.warehouseTimezone });
+        const formatter = new Intl.DateTimeFormat("en-CA", { timeZone: CHINA_TIME_ZONE });
         return formatter.format(new Date(vehicle.outboundAt)) === formatter.format(new Date());
       }).length,
     } });

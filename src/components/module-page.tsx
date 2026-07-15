@@ -2,14 +2,15 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
-import Link from "next/link";
 import QRCode from "qrcode";
 import { Download, FileSpreadsheet, Menu, Plus, Search, UploadCloud } from "lucide-react";
 import SideNav from "./side-nav";
 import VehicleFormModal from "./vehicle-form-modal";
+import VehicleTable from "./vehicle-table";
 import { can, inventoryDays, roleLabels, type BusinessType, type Role, type VehicleRecord } from "@/lib/domain";
 import { useVehicleRecords } from "@/lib/use-vehicle-records";
 import { useSession } from "@/lib/use-session";
+import { CHINA_TIME_ZONE, chinaDateTime, localInputValue, zonedLocalToIso } from "@/lib/datetime";
 
 type Kind = "vehicles" | "overseas" | "domestic" | "pickups" | "imports" | "reports" | "users" | "settings";
 const meta: Record<Kind, { eyebrow: string; title: string; description: string }> = {
@@ -30,12 +31,12 @@ export default function ModulePage({ kind }: { kind: Kind }) {
   const { user } = useSession();
   const m = meta[kind];
   const type: BusinessType | undefined = kind === "overseas" ? "overseas" : kind === "domestic" ? "domestic" : undefined;
-  const { records, saveRecord, usingDemoData } = useVehicleRecords();
+  const { records, saveRecord, loadError } = useVehicleRecords();
   const rows = useMemo(() => records.filter(vehicle =>
-    (!type || vehicle.type === type) && `${vehicle.vin}${vehicle.model}${vehicle.referenceNo}${vehicle.customer}`.toLowerCase().includes(q.toLowerCase()),
+    (!type || vehicle.type === type) && `${vehicle.vin}${vehicle.model}${vehicle.referenceNo}${vehicle.customer}${vehicle.warehouse}${vehicle.inboundBoeNo ?? ""}${vehicle.outboundBoeNo ?? ""}${vehicle.outboundBoeTitle ?? ""}`.toLowerCase().includes(q.toLowerCase()),
   ), [records, q, type]);
   const recordModule = ["vehicles", "overseas", "domestic"].includes(kind);
-  const role = user?.role ?? "viewer";
+  const role = user?.role ?? "customer";
 
   return <div className="app-shell">
     <SideNav open={mobile} onClose={() => setMobile(false)} role={role} roleLabel={roleLabels[role]} userName={user?.name}/>
@@ -50,7 +51,7 @@ export default function ModulePage({ kind }: { kind: Kind }) {
       </header>
       <section className="content">
         <div className="module-heading"><div><p className="eyebrow">{m.eyebrow}</p><h2>{m.title}</h2><p>{m.description}</p></div></div>
-        {recordModule && usingDemoData && <p className="data-warning">当前显示演示数据；连接数据库后，新增和编辑记录将自动持久化。</p>}
+        {recordModule && loadError && <p className="form-error">{loadError}</p>}
         {recordModule && <VehicleModule rows={rows} q={q} setQ={setQ} />}
         {kind === "pickups" && <PickupModule records={records} canCreate={can(role, "create")} />}
         {kind === "imports" && <ImportModule />}
@@ -66,7 +67,7 @@ export default function ModulePage({ kind }: { kind: Kind }) {
 function VehicleModule({ rows, q, setQ }: { rows: VehicleRecord[]; q: string; setQ: (value: string) => void }) {
   return <article className="panel table-panel module-panel">
     <div className="filters"><label className="search"><Search /><input value={q} onChange={event => setQ(event.target.value)} placeholder="搜索车架号、车型、提单 / PO、客户…" /></label><span className="result-count">共 {rows.length} 辆</span></div>
-    <div className="table-wrap"><table><thead><tr><th>车辆</th><th>提单 / PO</th><th>仓库</th><th>客户</th><th>库存天数</th><th>状态</th><th></th></tr></thead><tbody>{rows.map(vehicle => <tr key={vehicle.id}><td><b>{vehicle.model}</b><small>{vehicle.vin}</small></td><td>{vehicle.referenceNo}</td><td>{vehicle.warehouse}<small>{vehicle.warehouseLocation}</small></td><td>{vehicle.customer}</td><td>{inventoryDays(vehicle.inboundAt, vehicle.outboundAt)} 天</td><td><span className={`status status-${vehicle.status}`}>{vehicle.status}</span></td><td><Link href={`/vehicles/${vehicle.id}`}>查看 →</Link></td></tr>)}</tbody></table>{!rows.length && <div className="empty">暂无符合条件的车辆</div>}</div>
+    <VehicleTable rows={rows} storageKey="cargo.module-vehicle-table" />
   </article>;
 }
 
@@ -80,7 +81,7 @@ type PickupQr = { taskNo: string; url: string; qr: string };
 
 function expiryDefault() {
   const date = new Date(Date.now() + 24 * 60 * 60 * 1000);
-  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+  return localInputValue(date.toISOString(), CHINA_TIME_ZONE);
 }
 
 function PickupModule({ records, canCreate }: { records: VehicleRecord[]; canCreate: boolean }) {
@@ -109,7 +110,7 @@ function PickupModule({ records, canCreate }: { records: VehicleRecord[]; canCre
       const response = await fetch("/api/v1/pickups", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ vehicleIds: selected, expiresAt: new Date(expiresAt).toISOString() }),
+        body: JSON.stringify({ vehicleIds: selected, expiresAt: zonedLocalToIso(expiresAt, CHINA_TIME_ZONE) }),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.message || "创建提货任务失败");
@@ -135,7 +136,7 @@ function PickupModule({ records, canCreate }: { records: VehicleRecord[]; canCre
   const statusName = { pending: "进行中", submitted: "已签收", expired: "已过期", revoked: "已撤销" };
   return <div className="pickup-layout">
     <article className="panel pickup-create"><h3>{canCreate ? "创建提货二维码" : "查看提货二维码"}</h3>{canCreate && <form onSubmit={createTask}><div className="pickup-vehicles">{eligible.map(vehicle => <label key={vehicle.id}><input type="checkbox" checked={selected.includes(vehicle.id)} onChange={event => setSelected(current => event.target.checked ? [...current, vehicle.id] : current.filter(id => id !== vehicle.id))}/><span><b>{vehicle.model}</b><small>{vehicle.vin} · {vehicle.warehouse}</small></span></label>)}{!eligible.length && <p className="muted">暂无可创建提货任务的车辆</p>}</div><label className="expiry-field">二维码有效期<input type="datetime-local" value={expiresAt} onChange={event => setExpiresAt(event.target.value)} required/></label><button className="primary-button" disabled={loading || !selected.length}>{loading ? "创建中…" : "生成提货二维码"}</button></form>}{pickupQr ? <div className="qr-result"><b>{pickupQr.taskNo}</b><Image src={pickupQr.qr} width={180} height={180} unoptimized alt="司机提货二维码"/><div className="qr-actions"><a href={pickupQr.url} target="_blank" rel="noreferrer">打开签收页</a><a href={pickupQr.qr} download={`${pickupQr.taskNo}-二维码.png`}>下载二维码</a></div><p>{pickupQr.url}</p><small>此二维码可随时从右侧任务中重新查看。</small></div> : !canCreate && <p className="muted">请从右侧任务中选择“查看二维码”。</p>}{error && <p className="form-error">{error}</p>}</article>
-    <div className="module-cards pickup-cards">{tasks.map(task => <article className="panel action-card" key={task.id}><span>{statusName[task.status]}</span><h3>{task.taskNo}</h3><p>{task.vehicles.map(vehicle => vehicle.model).join("、")}</p><small>{task.vehicles.map(vehicle => `···${vehicle.vin.slice(-6)}`).join(" · ")}<br/>有效至 {new Intl.DateTimeFormat("zh-CN", { dateStyle: "short", timeStyle: "short" }).format(new Date(task.expiresAt))}</small><button type="button" className="task-qr-button" onClick={() => showTaskQr(task)}>查看二维码</button></article>)}{!tasks.length && !error && <p className="muted">暂无提货任务</p>}</div>
+    <div className="module-cards pickup-cards">{tasks.map(task => <article className="panel action-card" key={task.id}><span>{statusName[task.status]}</span><h3>{task.taskNo}</h3><p>{task.vehicles.map(vehicle => vehicle.model).join("、")}</p><small>{task.vehicles.map(vehicle => `···${vehicle.vin.slice(-6)}`).join(" · ")}<br/>有效至 {chinaDateTime(task.expiresAt)}</small><button type="button" className="task-qr-button" onClick={() => showTaskQr(task)}>查看二维码</button></article>)}{!tasks.length && !error && <p className="muted">暂无提货任务</p>}</div>
   </div>;
 }
 
@@ -159,7 +160,7 @@ function ImportModule() {
     } catch (reason) { setError(reason instanceof Error ? reason.message : "预校验失败"); }
     finally { setLoading(false); }
   }
-  return <article className="panel import-box"><UploadCloud/><h3>上传 Excel 进行预校验</h3><p>自动识别海外仓 23 列或国内仓 17 列标准模板，文件最大 10 MB</p><form onSubmit={preview}><label className="secondary-button">选择文件<input type="file" accept=".xlsx,.xls" onChange={event => setFile(event.target.files?.[0])}/></label>{file && <button className="primary-button" disabled={loading}>{loading ? "校验中…" : "提交预校验"}</button>}</form>{file && <div className="file-selected"><FileSpreadsheet/>已选择 {file.name}</div>}{error && <p className="form-error">{error}</p>}{result && <div className="import-result"><h4>{result.businessType}：{result.validRows} / {result.totalRows} 行可导入</h4>{result.errors.slice(0, 10).map(item => <p key={item.row}>第 {item.row} 行（{String(item.vin || "无车架号")}）：{item.errors.join("；")}</p>)}</div>}</article>;
+  return <article className="panel import-box"><UploadCloud/><h3>上传 Excel 进行预校验</h3><p>自动识别海外仓或国内仓，缺少的标准列和单元格按空值处理，文件最大 10 MB</p><form onSubmit={preview}><label className="secondary-button">选择文件<input type="file" accept=".xlsx,.xls" onChange={event => setFile(event.target.files?.[0])}/></label>{file && <button className="primary-button" disabled={loading}>{loading ? "校验中…" : "提交预校验"}</button>}</form>{file && <div className="file-selected"><FileSpreadsheet/>已选择 {file.name}</div>}{error && <p className="form-error">{error}</p>}{result && <div className="import-result"><h4>{result.businessType}：{result.validRows} / {result.totalRows} 行可导入</h4>{result.missingHeaders.length > 0 && <p>以下缺失列已按空值处理：{result.missingHeaders.join("、")}</p>}{result.errors.slice(0, 10).map(item => <p key={item.row}>第 {item.row} 行（{String(item.vin || "无车架号")}）：{item.errors.join("；")}</p>)}</div>}</article>;
 }
 
 function ReportModule({ records }: { records: VehicleRecord[] }) {
@@ -172,18 +173,21 @@ function ReportModule({ records }: { records: VehicleRecord[] }) {
   return <div className="report-grid"><article className="panel report-card"><span>实时在库/在途</span><strong>{inStorage.length}</strong><p>按当前车辆台账计算</p></article><article className="panel report-card"><span>平均库存天数</span><strong>{average}</strong><p>仅统计未出库车辆</p></article><article className="panel report-card"><span>30 天以上</span><strong>{counts[3].count}</strong><p>需要业务跟进</p></article><article className="panel age-panel report-wide"><h3>库存账龄分布</h3><div className="age-bars">{counts.map(item => <div key={item.name}><span>{item.name}</span><div><i className="green" style={{ width: `${item.count / max * 100}%` }}/></div><b>{item.count}</b></div>)}</div></article></div>;
 }
 
-type UserRow = { id: string; name: string; email: string; role: Role; active: boolean };
+type UserRow = { id: string; name: string; email: string; role: Role; active: boolean; customerId: string | null; warehouseIds: string[] };
+type UserOptions = { customers: { id: string; name: string }[]; warehouses: { id: string; name: string; location: string }[] };
 function UsersModule() {
   const [users, setUsers] = useState<UserRow[]>([]);
+  const [options, setOptions] = useState<UserOptions>({ customers: [], warehouses: [] });
   const [error, setError] = useState("");
-  useEffect(() => { fetch("/api/v1/users").then(async response => { const result = await response.json(); if (!response.ok) throw new Error(result.message); setUsers(result.data); }).catch(reason => setError(reason.message || "无法读取用户")); }, []);
-  async function update(user: UserRow, changes: Partial<Pick<UserRow, "active" | "role">>) {
+  useEffect(() => { fetch("/api/v1/users").then(async response => { const result = await response.json(); if (!response.ok) throw new Error(result.message); setUsers(result.data); setOptions(result.meta); }).catch(reason => setError(reason.message || "无法读取用户")); }, []);
+  async function update(user: UserRow, changes: Partial<Pick<UserRow, "active" | "role" | "customerId" | "warehouseIds">>) {
+    setError("");
     const response = await fetch("/api/v1/users", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: user.id, ...changes }) });
     const result = await response.json();
     if (!response.ok) return setError(result.message || "更新失败");
     setUsers(current => current.map(item => item.id === result.data.id ? result.data : item));
   }
-  return <article className="panel simple-list">{users.map(user => <div key={user.id}><span className="avatar">{user.name[0]}</span><p><b>{user.name}</b><small>{user.email} · {user.active ? "启用" : "停用"}</small></p><select value={user.role} onChange={event => update(user, { role: event.target.value as Role })}>{Object.entries(roleLabels).map(([role, label]) => <option value={role} key={role}>{label}</option>)}</select><button onClick={() => update(user, { active: !user.active })}>{user.active ? "停用" : "启用"}</button></div>)}{error && <p className="form-error">{error}</p>}</article>;
+  return <article className="panel simple-list user-scope-list">{users.map(user => <div key={user.id}><span className="avatar">{user.name[0]}</span><p><b>{user.name}</b><small>{user.email} · {user.active ? "启用" : "停用"}</small></p><select value={user.role} onChange={event => update(user, { role: event.target.value as Role })}>{Object.entries(roleLabels).map(([role, label]) => <option value={role} key={role}>{label}</option>)}</select><div className="scope-editor">{user.role === "customer" ? <label>绑定客户<select value={user.customerId ?? ""} onChange={event => update(user, { customerId: event.target.value || null })}><option value="">未分配</option>{options.customers.map(customer => <option value={customer.id} key={customer.id}>{customer.name}</option>)}</select></label> : user.role === "warehouse" ? <label>名下仓库<select multiple value={user.warehouseIds} onChange={event => update(user, { warehouseIds: [...event.currentTarget.selectedOptions].map(option => option.value) })}>{options.warehouses.map(warehouse => <option value={warehouse.id} key={warehouse.id}>{warehouse.name} · {warehouse.location}</option>)}</select></label> : <small>可访问全部车辆数据</small>}</div><button onClick={() => update(user, { active: !user.active })}>{user.active ? "停用" : "启用"}</button></div>)}{error && <p className="form-error">{error}</p>}</article>;
 }
 
 type SettingsData = { publicBaseUrl: string; warehouses: { id: string; name: string; location: string; bonded: boolean }[]; customers: { id: string; name: string; vehicleCount: number }[] };

@@ -33,7 +33,7 @@ export async function verifySession(token?: string): Promise<SessionClaims | und
   try {
     const { payload } = await jwtVerify(token, secret(), { algorithms: ["HS256"], issuer: "cargo-management", audience: "cargo-management-web" });
     if (!payload.sub || typeof payload.email !== "string" || typeof payload.name !== "string" ||
-      !["warehouse", "operator", "viewer", "admin"].includes(String(payload.role))) return undefined;
+      !["warehouse", "forwarder", "customer", "admin"].includes(String(payload.role))) return undefined;
     return {
       userId: payload.sub,
       email: payload.email,

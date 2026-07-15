@@ -4,13 +4,16 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, CalendarDays, MapPin, Pencil, ShieldCheck } from "lucide-react";
-import { vehicles } from "@/lib/demo-data";
 import { can, inventoryDays, type VehicleRecord } from "@/lib/domain";
 import { businessDate } from "@/lib/datetime";
 import { useSession } from "@/lib/use-session";
 import VehicleFormModal from "@/components/vehicle-form-modal";
 
 const formatDate = (value: string | undefined, timeZone: string) => businessDate(value, timeZone) || "—";
+const auditValue = (field: string, value: string | undefined) => {
+  if (!value) return "空";
+  return field.endsWith("At") || field === "etd" || field === "eta" ? formatDate(value, "Asia/Shanghai") : value;
+};
 
 const timelineFields: { field: keyof VehicleRecord; title: string }[] = [
   { field: "inboundAt", title: "车辆入库" },
@@ -26,8 +29,8 @@ const timelineFields: { field: keyof VehicleRecord; title: string }[] = [
 export default function VehicleDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { user } = useSession();
-  const [vehicle, setVehicle] = useState<VehicleRecord | undefined>(() => vehicles.find(item => item.id === id));
-  const [loading, setLoading] = useState(!vehicle);
+  const [vehicle, setVehicle] = useState<VehicleRecord>();
+  const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
 
   useEffect(() => {
@@ -38,7 +41,7 @@ export default function VehicleDetailPage() {
         return response.json() as Promise<{ data: VehicleRecord }>;
       })
       .then(result => setVehicle(result.data))
-      .catch(() => undefined)
+      .catch(() => setVehicle(undefined))
       .finally(() => setLoading(false));
     return () => controller.abort();
   }, [id]);
@@ -76,7 +79,12 @@ export default function VehicleDetailPage() {
     ["入库仓库名称", vehicle.warehouse],
     ["仓库时区", vehicle.warehouseTimezone],
     [overseas ? "入保税仓时间" : "入仓时间", formatDate(vehicle.inboundAt, vehicle.warehouseTimezone)],
+    ["入库金额", vehicle.inboundAmount],
+    ["入库 BOE 号", vehicle.inboundBoeNo],
     ["实际出库时间", formatDate(vehicle.outboundAt, vehicle.warehouseTimezone)],
+    ["出库 BOE 号", vehicle.outboundBoeNo],
+    ["BOE 抬头", vehicle.outboundBoeTitle],
+    ["出库金额", vehicle.outboundAmount],
   ];
 
   return <main className="detail-shell">
@@ -85,6 +93,7 @@ export default function VehicleDetailPage() {
     <div className="detail-grid">
       <section className="panel detail-main"><h2>业务信息</h2><div className="fact-grid">{facts.map(([label, content]) => <div key={label}><span>{label}</span><b>{label.includes("地点") || label.includes("仓库") ? <MapPin size={15} /> : label.includes("时间") ? <CalendarDays size={15} /> : <ShieldCheck size={15} />}{content || "—"}</b></div>)}</div>{vehicle.pickupDetails && <div className="notice"><b>出库提货明细</b><p>{vehicle.pickupDetails}</p></div>}{vehicle.notes && <div className="notice"><b>备注</b><p>{vehicle.notes}</p></div>}</section>
       <section className="panel"><h2>不可覆盖的业务时间线</h2>{timeline.length ? <div className="timeline">{timeline.map((item, index) => <div className="timeline-item" key={`${item.field}-${item.time}`}><i className={index === timeline.length - 1 ? "active" : ""} /><div><b>{item.title}</b><time>{formatDate(item.time, vehicle.warehouseTimezone)}</time><p>{item.reason || "该业务事件已记录；后续修改只会追加更正记录。"}</p><small>{item.actor || "系统业务事件"}{item.recordedAt ? ` · 记录于 ${formatDate(item.recordedAt, vehicle.warehouseTimezone)}` : ""}</small></div></div>)}</div> : <p className="muted">尚未录入业务节点时间。</p>}</section>
+      <section className="panel audit-panel"><h2>数据修改记录</h2><p className="audit-timezone">所有记录均按中国标准时间显示</p>{vehicle.auditTrail?.length ? <div className="audit-list">{[...vehicle.auditTrail].reverse().map(entry => <article key={entry.id}><div><b>{entry.action}</b><time>{formatDate(entry.changedAt, vehicle.warehouseTimezone)}</time></div><small>{entry.actor}</small>{entry.changes.length ? <ul>{entry.changes.map(change => <li key={change.field}><span>{change.label}</span><del>{auditValue(change.field, change.before)}</del><i>→</i><ins>{auditValue(change.field, change.after)}</ins></li>)}</ul> : <p>已保存完整操作记录</p>}</article>)}</div> : <p className="muted">暂无数据修改记录。</p>}</section>
     </div>
     {editing && <VehicleFormModal initial={vehicle} onClose={() => setEditing(false)} onSaved={setVehicle} />}
   </main>;

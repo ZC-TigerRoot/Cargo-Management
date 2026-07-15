@@ -1,7 +1,8 @@
 import { randomBytes } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
+import type { VehicleStatus } from "@prisma/client";
 import { z } from "zod";
-import { assertSameOrigin, AuthorizationError, requestIp, requireUser } from "@/lib/auth";
+import { assertSameOrigin, AuthorizationError, pickupTaskScopeWhere, requestIp, requireUser, vehicleScopeWhere } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { buildPickupUrl, getPublicBaseUrl } from "@/lib/public-url";
 
@@ -9,6 +10,11 @@ const pickupInput = z.object({
   vehicleIds: z.array(z.string().min(1)).min(1).max(50),
   expiresAt: z.iso.datetime(),
 });
+
+const statusLabels: Record<VehicleStatus, string> = {
+  PENDING_INBOUND: "待入库", IN_STOCK: "在库", PENDING_RELEASE: "待放车", PENDING_PICKUP: "待提货",
+  OUTBOUND: "已出库", PENDING_RECEIPT: "待签收", COMPLETED: "已完成", EXCEPTION: "异常",
+};
 
 function taskData(task: {
   id: string; taskNo: string; token: string; expiresAt: Date; revokedAt: Date | null; submittedAt: Date | null; createdAt: Date;
@@ -31,9 +37,9 @@ const include = { items: { include: { vehicle: { select: { id: true, vin: true, 
 
 export async function GET(req: NextRequest) {
   try {
-    await requireUser("view");
+    const user = await requireUser("coordinatePickups");
     const [tasks, publicBaseUrl] = await Promise.all([
-      prisma.pickupTask.findMany({ include, orderBy: { createdAt: "desc" }, take: 100 }),
+      prisma.pickupTask.findMany({ where: pickupTaskScopeWhere(user), include, orderBy: { createdAt: "desc" }, take: 100 }),
       getPublicBaseUrl(req.nextUrl.origin),
     ]);
     return NextResponse.json({ data: tasks.map(task => taskData(task, publicBaseUrl)) });
@@ -53,7 +59,10 @@ export async function POST(req: NextRequest) {
     const expiresAt = new Date(parsed.data.expiresAt);
     if (expiresAt <= new Date()) return NextResponse.json({ error: "INVALID_EXPIRY", message: "二维码有效期必须晚于当前时间" }, { status: 422 });
     const vehicleIds = [...new Set(parsed.data.vehicleIds)];
-    const vehicles = await prisma.vehicle.findMany({ where: { id: { in: vehicleIds } }, select: { id: true, vin: true, model: true, status: true } });
+    const vehicles = await prisma.vehicle.findMany({
+      where: { id: { in: vehicleIds }, ...vehicleScopeWhere(user) },
+      select: { id: true, vin: true, model: true, status: true, version: true },
+    });
     if (vehicles.length !== vehicleIds.length) return NextResponse.json({ error: "VEHICLE_NOT_FOUND", message: "部分车辆不存在，请刷新后重试" }, { status: 404 });
     const unavailable = vehicles.filter(vehicle => !["IN_STOCK", "PENDING_RELEASE", "PENDING_PICKUP"].includes(vehicle.status));
     if (unavailable.length) return NextResponse.json({ error: "VEHICLE_NOT_AVAILABLE", message: `以下车辆当前不可提货：${unavailable.map(vehicle => vehicle.vin).join("、")}` }, { status: 409 });
@@ -90,6 +99,17 @@ export async function POST(req: NextRequest) {
             actorId: user.id,
             idempotencyKey: `${created.id}:${vehicle.id}`,
             payload: { taskNo, expiresAt: expiresAt.toISOString() },
+          },
+        });
+        await tx.auditLog.create({
+          data: {
+            actorId: user.id,
+            action: "PICKUP_CREATED",
+            entityType: "Vehicle",
+            entityId: vehicle.id,
+            before: { status: statusLabels[vehicle.status], version: vehicle.version },
+            after: { status: "待提货", version: vehicle.version + 1, taskNo },
+            ip: requestIp(req),
           },
         });
       }

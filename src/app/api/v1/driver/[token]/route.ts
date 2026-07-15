@@ -1,10 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import type { Prisma } from "@prisma/client";
+import type { Prisma, VehicleStatus } from "@prisma/client";
 import { driverSubmission } from "@/lib/validators";
 import { prisma } from "@/lib/prisma";
 import { requestIp } from "@/lib/auth";
 
 const receiptNo = (taskNo: string) => taskNo.replace(/^PU-/, "RC-");
+const statusLabels: Record<VehicleStatus, string> = {
+  PENDING_INBOUND: "待入库", IN_STOCK: "在库", PENDING_RELEASE: "待放车", PENDING_PICKUP: "待提货",
+  OUTBOUND: "已出库", PENDING_RECEIPT: "待签收", COMPLETED: "已完成", EXCEPTION: "异常",
+};
 
 function jsonObject(value: Prisma.JsonValue | null) {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, Prisma.JsonValue> : {};
@@ -13,7 +17,7 @@ function jsonObject(value: Prisma.JsonValue | null) {
 async function findTask(token: string) {
   return prisma.pickupTask.findUnique({
     where: { token },
-    include: { items: { include: { vehicle: { select: { id: true, vin: true, model: true, status: true } } } } },
+    include: { items: { include: { vehicle: { select: { id: true, vin: true, model: true, status: true, version: true } } } } },
   });
 }
 
@@ -78,16 +82,29 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
             type: "DRIVER_SIGNED",
             occurredAt: new Date(parsed.data.pickupAt),
             idempotencyKey: `${parsed.data.idempotencyKey}:${item.vehicle.id}`,
-            payload: { taskNo: task!.taskNo, photoUploaded: true },
+            payload: { taskNo: task!.taskNo, photoUploaded: true, actorLabel: "司机（提货链接）" },
+          },
+        });
+        await tx.auditLog.create({
+          data: {
+            actorLabel: "司机（提货链接）",
+            action: "PICKUP_SIGNED",
+            entityType: "Vehicle",
+            entityId: item.vehicle.id,
+            before: { status: statusLabels[item.vehicle.status], version: item.vehicle.version },
+            after: { status: "已完成", version: item.vehicle.version + 1, taskNo: task!.taskNo },
+            ip: requestIp(req),
           },
         });
       }
       await tx.auditLog.create({
         data: {
+          actorLabel: "司机（提货链接）",
           action: "PICKUP_SIGNED",
           entityType: "PickupTask",
           entityId: task!.id,
-          after: { taskNo: task!.taskNo, submittedAt: now.toISOString(), photoUploaded: true, vehicleIds: task!.items.map(item => item.vehicle.id) },
+          before: { taskNo: task!.taskNo, submittedAt: null, status: "pending" },
+          after: { taskNo: task!.taskNo, submittedAt: now.toISOString(), status: "submitted", photoUploaded: true, vehicleIds: task!.items.map(item => item.vehicle.id) },
           ip: requestIp(req),
         },
       });

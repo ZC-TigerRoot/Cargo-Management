@@ -20,6 +20,8 @@ describe("登录会话", () => {
 
   it("拒绝被篡改的会话", async () => {
     const token = await signSession({ userId: "user-001", email: "admin@example.com", name: "管理员", role: "admin" });
-    expect(await verifySession(`${token.slice(0, -1)}x`)).toBeUndefined();
+    const middle = Math.floor(token.length / 2);
+    const changed = token[middle] === "x" ? "y" : "x";
+    expect(await verifySession(`${token.slice(0, middle)}${changed}${token.slice(middle + 1)}`)).toBeUndefined();
   });
 });

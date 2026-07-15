@@ -1,12 +1,21 @@
 import { z } from "zod";
 import { vehicleStatuses } from "./domain";
-import { isTimeZone } from "./datetime";
+import { CHINA_TIME_ZONE } from "./datetime";
 
 const optionalText = z.string().trim().optional().transform(value => value || undefined);
 const optionalDateTime = z.iso.datetime({ offset: true }).optional();
+const optionalAmount = z.union([z.string().trim(), z.number().finite()]).optional().transform((value, ctx) => {
+  if (value === undefined || value === "") return undefined;
+  const normalized = typeof value === "number" ? value.toFixed(2) : value;
+  if (!/^\d{1,16}(?:\.\d{1,2})?$/.test(normalized)) {
+    ctx.addIssue({ code: "custom", message: "金额必须为非负数、最多 16 位整数和两位小数" });
+    return z.NEVER;
+  }
+  return normalized;
+});
 
 export const vehiclePayload = z.object({
-  vin: z.string().trim().toUpperCase().regex(/^[A-HJ-NPR-Z0-9]{17}$/, "车架号必须为 17 位且不能包含 I、O、Q"),
+  vin: z.string().trim().min(1, "车架号不能为空").max(100, "车架号不能超过 100 个字符").transform(value => value.toUpperCase()),
   model: z.string().trim().min(1, "车型不能为空"),
   brand: optionalText,
   type: z.enum(["overseas", "domestic"]),
@@ -20,14 +29,19 @@ export const vehiclePayload = z.object({
   manufacturer: optionalText,
   warehouseLocation: z.string().trim().min(1, "仓库地点不能为空"),
   warehouse: z.string().trim().min(1, "入库仓库名称不能为空"),
-  warehouseTimezone: z.string().trim().refine(isTimeZone, "仓库时区无效"),
+  warehouseTimezone: z.literal(CHINA_TIME_ZONE),
   customer: z.string().trim().min(1, "所属客人不能为空"),
   inboundAt: optionalDateTime,
+  inboundAmount: optionalAmount,
+  inboundBoeNo: optionalText,
   merchantReleaseAt: optionalDateTime,
   transferDocNoticeAt: optionalDateTime,
   customerReleaseAt: optionalDateTime,
   pickupDetails: optionalText,
   outboundAt: optionalDateTime,
+  outboundBoeNo: optionalText,
+  outboundBoeTitle: optionalText,
+  outboundAmount: optionalAmount,
   outboundNoticeDeliveredAt: optionalDateTime,
   customerReceiptDeliveredAt: optionalDateTime,
   agentReceiptDeliveredAt: optionalDateTime,

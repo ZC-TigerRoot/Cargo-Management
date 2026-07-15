@@ -2,11 +2,11 @@
 
 import { useEffect, useState } from "react";
 import type { VehicleRecord } from "./domain";
-import { vehicles as demoVehicles } from "./demo-data";
 
 export function useVehicleRecords() {
-  const [records, setRecords] = useState<VehicleRecord[]>(demoVehicles);
-  const [usingDemoData, setUsingDemoData] = useState(true);
+  const [records, setRecords] = useState<VehicleRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
 
   useEffect(() => {
     const controller = new AbortController();
@@ -21,12 +21,14 @@ export function useVehicleRecords() {
       })
       .then(result => {
         setRecords(result.data);
-        setUsingDemoData(false);
+        setLoadError("");
       })
       .catch(error => {
         if (error instanceof DOMException && error.name === "AbortError") return;
-        setUsingDemoData(true);
-      });
+        setRecords([]);
+        setLoadError("无法读取车辆数据，请稍后重试");
+      })
+      .finally(() => setLoading(false));
     return () => controller.abort();
   }, []);
 
@@ -35,8 +37,8 @@ export function useVehicleRecords() {
       const exists = current.some(item => item.id === record.id);
       return exists ? current.map(item => item.id === record.id ? record : item) : [record, ...current];
     });
-    setUsingDemoData(false);
+    setLoadError("");
   }
 
-  return { records, saveRecord, usingDemoData };
+  return { records, saveRecord, loading, loadError };
 }

@@ -9,8 +9,8 @@ datasource db {
 
 enum Role {
   WAREHOUSE
-  OPERATOR
-  VIEWER
+  FORWARDER
+  CUSTOMER
   ADMIN
 }
 
@@ -48,32 +48,47 @@ enum EventType {
 }
 
 model User {
-  id           String           @id @default(cuid())
-  email        String           @unique
-  name         String
-  passwordHash String
-  role         Role
-  active       Boolean          @default(true)
-  scopes       Json             @default("{}")
-  createdAt    DateTime         @default(now())
-  events       InventoryEvent[]
-  audits       AuditLog[]
+  id              String               @id @default(cuid())
+  email           String               @unique
+  name            String
+  passwordHash    String
+  role            Role
+  active          Boolean              @default(true)
+  scopes          Json                 @default("{}")
+  customerId      String?
+  customer        Customer?            @relation(fields: [customerId], references: [id])
+  warehouseScopes UserWarehouseScope[]
+  createdAt       DateTime             @default(now())
+  events          InventoryEvent[]
+  audits          AuditLog[]
 }
 
 model Customer {
   id       String    @id @default(cuid())
   name     String    @unique
   vehicles Vehicle[]
+  users    User[]
 }
 
 model Warehouse {
-  id       String    @id @default(cuid())
-  name     String
-  location String
-  bonded   Boolean   @default(false)
-  vehicles Vehicle[]
+  id         String               @id @default(cuid())
+  name       String
+  location   String
+  bonded     Boolean              @default(false)
+  vehicles   Vehicle[]
+  userScopes UserWarehouseScope[]
 
   @@unique([name, location])
+}
+
+model UserWarehouseScope {
+  userId      String
+  warehouseId String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  warehouse   Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+
+  @@id([userId, warehouseId])
+  @@index([warehouseId])
 }
 
 model BusinessBatch {
@@ -94,29 +109,34 @@ model BusinessBatch {
 }
 
 model Vehicle {
-  id            String           @id @default(cuid())
-  vin           String           @unique
-  model         String
-  brand         String?
-  hsCode        String?
-  status        VehicleStatus    @default(PENDING_INBOUND)
-  version       Int              @default(1)
-  inboundAt     DateTime?
-  outboundAt    DateTime?
-  pickupDetails String?
-  notes         String?
-  extra         Json             @default("{}")
-  batchId       String?
-  batch         BusinessBatch?   @relation(fields: [batchId], references: [id])
-  customerId    String?
-  customer      Customer?        @relation(fields: [customerId], references: [id])
-  warehouseId   String?
-  warehouse     Warehouse?       @relation(fields: [warehouseId], references: [id])
-  events        InventoryEvent[]
-  pickupItems   PickupItem[]
-  attachments   Attachment[]
-  createdAt     DateTime         @default(now())
-  updatedAt     DateTime         @updatedAt
+  id               String           @id @default(cuid())
+  vin              String           @unique
+  model            String
+  brand            String?
+  hsCode           String?
+  status           VehicleStatus    @default(PENDING_INBOUND)
+  version          Int              @default(1)
+  inboundAt        DateTime?
+  inboundAmount    Decimal?         @db.Decimal(18, 2)
+  inboundBoeNo     String?
+  outboundAt       DateTime?
+  outboundBoeNo    String?
+  outboundBoeTitle String?
+  outboundAmount   Decimal?         @db.Decimal(18, 2)
+  pickupDetails    String?
+  notes            String?
+  extra            Json             @default("{}")
+  batchId          String?
+  batch            BusinessBatch?   @relation(fields: [batchId], references: [id])
+  customerId       String?
+  customer         Customer?        @relation(fields: [customerId], references: [id])
+  warehouseId      String?
+  warehouse        Warehouse?       @relation(fields: [warehouseId], references: [id])
+  events           InventoryEvent[]
+  pickupItems      PickupItem[]
+  attachments      Attachment[]
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
 }
 
 model InventoryEvent {
@@ -138,7 +158,7 @@ model InventoryEvent {
 model PickupTask {
   id               String       @id @default(cuid())
   taskNo           String       @unique
-  token             String       @unique
+  token            String       @unique
   expiresAt        DateTime
   revokedAt        DateTime?
   submittedAt      DateTime?
@@ -177,6 +197,7 @@ model AuditLog {
   id         String   @id @default(cuid())
   actorId    String?
   actor      User?    @relation(fields: [actorId], references: [id])
+  actorLabel String?
   action     String
   entityType String
   entityId   String

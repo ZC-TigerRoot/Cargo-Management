@@ -8,7 +8,7 @@ const settingInput = z.object({ publicBaseUrl: z.string().trim().min(1) });
 
 export async function GET(req: NextRequest) {
   try {
-    await requireUser("manageUsers");
+    await requireUser("manageSettings");
     const [warehouses, customers, publicBaseUrl] = await Promise.all([
       prisma.warehouse.findMany({ orderBy: { name: "asc" } }),
       prisma.customer.findMany({ orderBy: { name: "asc" }, include: { _count: { select: { vehicles: true } } } }),
@@ -28,7 +28,7 @@ export async function GET(req: NextRequest) {
 
 export async function PATCH(req: NextRequest) {
   try {
-    const user = await requireUser("manageUsers");
+    const user = await requireUser("manageSettings");
     assertSameOrigin(req);
     const parsed = settingInput.safeParse(await req.json());
     if (!parsed.success) return NextResponse.json({ error: "VALIDATION_ERROR", message: "请输入完整的当前域名，例如 https://cargo.example.com" }, { status: 422 });

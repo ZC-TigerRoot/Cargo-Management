@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { X } from "lucide-react";
 import { vehicleStatuses, type BusinessType, type VehicleFormValues, type VehicleRecord, type VehicleStatus } from "@/lib/domain";
-import { defaultWarehouseTimezone, localInputValue, zonedLocalToIso } from "@/lib/datetime";
+import { CHINA_TIME_ZONE, localInputValue, zonedLocalToIso } from "@/lib/datetime";
 
 type Props = {
   defaultType?: BusinessType;
@@ -14,7 +14,6 @@ type Props = {
 
 export default function VehicleFormModal({ defaultType = "overseas", initial, onClose, onSaved }: Props) {
   const [type, setType] = useState<BusinessType>(initial?.type ?? defaultType);
-  const [warehouseTimezone, setWarehouseTimezone] = useState(initial?.warehouseTimezone ?? defaultWarehouseTimezone(initial?.type ?? defaultType));
   const [status, setStatus] = useState<VehicleStatus>(initial?.status ?? "待入库");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -25,7 +24,7 @@ export default function VehicleFormModal({ defaultType = "overseas", initial, on
     const text = (name: string) => String(formData.get(name) || "").trim() || undefined;
     const date = (name: string) => {
       const value = text(name);
-      return value ? zonedLocalToIso(value, warehouseTimezone) : undefined;
+      return value ? zonedLocalToIso(value, CHINA_TIME_ZONE) : undefined;
     };
     const payload: VehicleFormValues = {
       type,
@@ -42,14 +41,19 @@ export default function VehicleFormModal({ defaultType = "overseas", initial, on
       manufacturer: text("manufacturer"),
       warehouseLocation: text("warehouseLocation") || "",
       warehouse: text("warehouse") || "",
-      warehouseTimezone,
+      warehouseTimezone: CHINA_TIME_ZONE,
       customer: text("customer") || "",
       inboundAt: date("inboundAt"),
+      inboundAmount: text("inboundAmount"),
+      inboundBoeNo: text("inboundBoeNo"),
       merchantReleaseAt: date("merchantReleaseAt"),
       transferDocNoticeAt: date("transferDocNoticeAt"),
       customerReleaseAt: date("customerReleaseAt"),
       pickupDetails: text("pickupDetails"),
       outboundAt: date("outboundAt"),
+      outboundBoeNo: text("outboundBoeNo"),
+      outboundBoeTitle: text("outboundBoeTitle"),
+      outboundAmount: text("outboundAmount"),
       outboundNoticeDeliveredAt: date("outboundNoticeDeliveredAt"),
       customerReceiptDeliveredAt: date("customerReceiptDeliveredAt"),
       agentReceiptDeliveredAt: date("agentReceiptDeliveredAt"),
@@ -84,7 +88,7 @@ export default function VehicleFormModal({ defaultType = "overseas", initial, on
   }
 
   const value = (field: keyof VehicleRecord) => String(initial?.[field] ?? "");
-  const dateValue = (field: keyof VehicleRecord) => localInputValue(initial?.[field] as string | undefined, warehouseTimezone);
+  const dateValue = (field: keyof VehicleRecord) => localInputValue(initial?.[field] as string | undefined, CHINA_TIME_ZONE);
 
   return <div className="modal-backdrop" onMouseDown={onClose}>
     <section className="modal vehicle-modal" onMouseDown={event => event.stopPropagation()}>
@@ -104,8 +108,8 @@ export default function VehicleFormModal({ defaultType = "overseas", initial, on
         <fieldset className="form-section">
           <legend>车辆与批次</legend>
           <div className="form-grid">
-            <label>业务类型<select name="type" value={type} onChange={event => { const next = event.target.value as BusinessType; setType(next); setWarehouseTimezone(defaultWarehouseTimezone(next)); }}><option value="overseas">海外保税仓</option><option value="domestic">国内仓储</option></select></label>
-            <label>车架号<input name="vin" minLength={17} maxLength={17} required defaultValue={value("vin")} placeholder="17 位 VIN" /></label>
+            <label>业务类型<select name="type" value={type} onChange={event => setType(event.target.value as BusinessType)}><option value="overseas">海外保税仓</option><option value="domestic">国内仓储</option></select></label>
+            <label>车架号<input name="vin" maxLength={100} required defaultValue={value("vin")} placeholder="输入车架号（不限 17 位）" /></label>
             <label>车型<input name="model" required defaultValue={value("model")} /></label>
             {type === "domestic" && <label>品牌<input name="brand" defaultValue={value("brand")} /></label>}
             {type === "domestic" && <label>生产商<input name="manufacturer" defaultValue={value("manufacturer")} /></label>}
@@ -125,8 +129,10 @@ export default function VehicleFormModal({ defaultType = "overseas", initial, on
             <label>{type === "overseas" ? "保税仓地点" : "仓库地点"}<input name="warehouseLocation" required defaultValue={value("warehouseLocation")} /></label>
             <label>入库仓库名称<input name="warehouse" required defaultValue={value("warehouse")} /></label>
             <label>所属客人<input name="customer" required defaultValue={value("customer")} /></label>
-            <label>仓库时区<select name="warehouseTimezone" value={warehouseTimezone} onChange={event => setWarehouseTimezone(event.target.value)}><option value="Asia/Shanghai">中国标准时间</option><option value="Asia/Dubai">迪拜时间</option><option value="Africa/Nairobi">东非时间</option><option value="UTC">UTC</option></select></label>
+            <label>系统时区<input value="中国标准时间（Asia/Shanghai）" disabled readOnly /></label>
             <label>{type === "overseas" ? "入保税仓库时间" : "入仓库时间"}<input type="datetime-local" name="inboundAt" defaultValue={dateValue("inboundAt")} /></label>
+            <label>入库金额<input type="number" name="inboundAmount" min="0" step="0.01" defaultValue={value("inboundAmount")} /></label>
+            <label>入库 BOE 号<input name="inboundBoeNo" defaultValue={value("inboundBoeNo")} /></label>
           </div>
         </fieldset>
 
@@ -137,6 +143,9 @@ export default function VehicleFormModal({ defaultType = "overseas", initial, on
             {type === "overseas" && <label>客户通知做过户文件时间<input type="datetime-local" name="transferDocNoticeAt" defaultValue={dateValue("transferDocNoticeAt")} /></label>}
             {type === "overseas" && <label>客户通知放车时间<input type="datetime-local" name="customerReleaseAt" defaultValue={dateValue("customerReleaseAt")} /></label>}
             <label>实际出库时间<input type="datetime-local" name="outboundAt" defaultValue={dateValue("outboundAt")} /></label>
+            <label>出库 BOE 号<input name="outboundBoeNo" defaultValue={value("outboundBoeNo")} /></label>
+            <label>BOE 抬头<input name="outboundBoeTitle" defaultValue={value("outboundBoeTitle")} /></label>
+            <label>出库金额<input type="number" name="outboundAmount" min="0" step="0.01" defaultValue={value("outboundAmount")} /></label>
             <label className="span-2">出库提货明细<textarea name="pickupDetails" defaultValue={value("pickupDetails")} rows={3} /></label>
             <label>出库通知单交付给商社日期<input type="datetime-local" name="outboundNoticeDeliveredAt" defaultValue={dateValue("outboundNoticeDeliveredAt")} /></label>
             <label>客户交付签收单日期<input type="datetime-local" name="customerReceiptDeliveredAt" defaultValue={dateValue("customerReceiptDeliveredAt")} /></label>

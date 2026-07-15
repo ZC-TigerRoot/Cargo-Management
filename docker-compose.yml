@@ -5,6 +5,8 @@ services:
       POSTGRES_DB: cargo_management
       POSTGRES_USER: cargo
       POSTGRES_PASSWORD: cargo-local-password
+      TZ: Asia/Shanghai
+      PGTZ: Asia/Shanghai
     ports: ["5432:5432"]
     volumes: ["cargo_pgdata:/var/lib/postgresql/data"]
     healthcheck:
@@ -14,4 +16,3 @@ services:
       retries: 10
 volumes:
   cargo_pgdata:
-
