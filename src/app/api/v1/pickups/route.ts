@@ -1,23 +1,25 @@
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { assertSameOrigin, AuthorizationError, requestIp, requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { buildPickupUrl, getPublicBaseUrl } from "@/lib/public-url";
 
 const pickupInput = z.object({
   vehicleIds: z.array(z.string().min(1)).min(1).max(50),
   expiresAt: z.iso.datetime(),
 });
 
-const hashToken = (token: string) => createHash("sha256").update(token).digest("hex");
-
 function taskData(task: {
-  id: string; taskNo: string; expiresAt: Date; revokedAt: Date | null; submittedAt: Date | null; createdAt: Date;
+  id: string; taskNo: string; token: string; expiresAt: Date; revokedAt: Date | null; submittedAt: Date | null; createdAt: Date;
   items: { vehicle: { id: string; vin: string; model: string } }[];
-}) {
+}, publicBaseUrl: string) {
+  const tokenPath = `/driver/${encodeURIComponent(task.token)}`;
   return {
     id: task.id,
     taskNo: task.taskNo,
+    tokenPath,
+    pickupUrl: buildPickupUrl(publicBaseUrl, task.token),
     expiresAt: task.expiresAt.toISOString(),
     createdAt: task.createdAt.toISOString(),
     status: task.revokedAt ? "revoked" : task.submittedAt ? "submitted" : task.expiresAt <= new Date() ? "expired" : "pending",
@@ -27,11 +29,14 @@ function taskData(task: {
 
 const include = { items: { include: { vehicle: { select: { id: true, vin: true, model: true } } } } } as const;
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
     await requireUser("view");
-    const tasks = await prisma.pickupTask.findMany({ include, orderBy: { createdAt: "desc" }, take: 100 });
-    return NextResponse.json({ data: tasks.map(taskData) });
+    const [tasks, publicBaseUrl] = await Promise.all([
+      prisma.pickupTask.findMany({ include, orderBy: { createdAt: "desc" }, take: 100 }),
+      getPublicBaseUrl(req.nextUrl.origin),
+    ]);
+    return NextResponse.json({ data: tasks.map(task => taskData(task, publicBaseUrl)) });
   } catch (error) {
     if (error instanceof AuthorizationError) return NextResponse.json({ error: "UNAUTHENTICATED", message: error.message }, { status: error.status });
     console.error(error);
@@ -58,17 +63,18 @@ export async function POST(req: NextRequest) {
     });
     if (activeItems.length) {
       const vins = vehicles.filter(vehicle => activeItems.some(item => item.vehicleId === vehicle.id)).map(vehicle => vehicle.vin);
-      return NextResponse.json({ error: "ACTIVE_TASK_EXISTS", message: `以下车辆已有有效提货任务：${vins.join("、")}` }, { status: 409 });
+      return NextResponse.json({ error: "ACTIVE_TASK_EXISTS", message: `以下车辆已有有效提货任务：${vins.join("、")}。请在右侧任务卡片中查看二维码。` }, { status: 409 });
     }
 
     const token = randomBytes(24).toString("base64url");
+    const publicBaseUrl = await getPublicBaseUrl(req.nextUrl.origin);
     const date = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date()).replaceAll("-", "");
     const taskNo = `PU-${date}-${randomBytes(3).toString("hex").toUpperCase()}`;
     const task = await prisma.$transaction(async tx => {
       const created = await tx.pickupTask.create({
         data: {
           taskNo,
-          tokenHash: hashToken(token),
+          token,
           expiresAt,
           items: { create: vehicles.map(vehicle => ({ vehicleId: vehicle.id })) },
         },
@@ -99,7 +105,7 @@ export async function POST(req: NextRequest) {
       });
       return created;
     });
-    return NextResponse.json({ data: { ...taskData(task), tokenPath: `/driver/${token}` } }, { status: 201 });
+    return NextResponse.json({ data: taskData(task, publicBaseUrl) }, { status: 201 });
   } catch (error) {
     if (error instanceof AuthorizationError) return NextResponse.json({ error: error.status === 401 ? "UNAUTHENTICATED" : "FORBIDDEN", message: error.message }, { status: error.status });
     if (error instanceof SyntaxError) return NextResponse.json({ error: "INVALID_JSON", message: "请求内容不是有效的 JSON" }, { status: 400 });

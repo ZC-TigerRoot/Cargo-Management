@@ -1,11 +1,9 @@
-import { createHash } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import type { Prisma } from "@prisma/client";
 import { driverSubmission } from "@/lib/validators";
 import { prisma } from "@/lib/prisma";
 import { requestIp } from "@/lib/auth";
 
-const tokenHash = (token: string) => createHash("sha256").update(token).digest("hex");
 const receiptNo = (taskNo: string) => taskNo.replace(/^PU-/, "RC-");
 
 function jsonObject(value: Prisma.JsonValue | null) {
@@ -14,7 +12,7 @@ function jsonObject(value: Prisma.JsonValue | null) {
 
 async function findTask(token: string) {
   return prisma.pickupTask.findUnique({
-    where: { tokenHash: tokenHash(token) },
+    where: { token },
     include: { items: { include: { vehicle: { select: { id: true, vin: true, model: true, status: true } } } } },
   });
 }
@@ -31,14 +29,12 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ token:
     const task = await findTask(token);
     const error = taskError(task);
     if (error) return error;
-    const submission = jsonObject(task!.driverSubmission);
     return NextResponse.json({ data: {
       taskNo: task!.taskNo,
       expiresAt: task!.expiresAt.toISOString(),
       status: task!.submittedAt ? "submitted" : "pending",
       submittedAt: task!.submittedAt?.toISOString(),
       receiptNo: task!.submittedAt ? receiptNo(task!.taskNo) : undefined,
-      driverName: typeof submission.name === "string" ? submission.name : undefined,
       vehicles: task!.items.map(item => ({ vin: item.vehicle.vin, model: item.vehicle.model })),
     } });
   } catch (error) {
@@ -82,7 +78,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
             type: "DRIVER_SIGNED",
             occurredAt: new Date(parsed.data.pickupAt),
             idempotencyKey: `${parsed.data.idempotencyKey}:${item.vehicle.id}`,
-            payload: { taskNo: task!.taskNo, driverName: parsed.data.name, phone: parsed.data.phone, plateNo: parsed.data.plateNo },
+            payload: { taskNo: task!.taskNo, photoUploaded: true },
           },
         });
       }
@@ -91,7 +87,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
           action: "PICKUP_SIGNED",
           entityType: "PickupTask",
           entityId: task!.id,
-          after: { taskNo: task!.taskNo, submittedAt: now.toISOString(), driverName: parsed.data.name, vehicleIds: task!.items.map(item => item.vehicle.id) },
+          after: { taskNo: task!.taskNo, submittedAt: now.toISOString(), photoUploaded: true, vehicleIds: task!.items.map(item => item.vehicle.id) },
           ip: requestIp(req),
         },
       });

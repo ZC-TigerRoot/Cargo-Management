@@ -18,6 +18,7 @@
 - 登录会话使用由 `AUTH_SECRET` 签名的 HttpOnly、SameSite=Strict Cookie，有效期 8 小时。
 - 仓管员可查看和录入；操作管理员可查看、录入、更正和导出；业务查看者只读；系统管理员拥有全部权限及用户管理权限。
 - 权限在页面代理和每个 API handler 中同时校验，写请求还校验同源信息。
+- 提货任务保存可读取的随机令牌，已创建任务的二维码和签收链接可从提货任务页重复查看与下载。
 - 车辆修改使用版本号进行乐观锁检查；并发冲突返回 HTTP 409，不会静默覆盖其他用户的修改。
 - 车辆创建、修改、状态变更、提货任务和司机签收均在数据库事务中写入审计日志或库存事件。
 
@@ -30,7 +31,7 @@
 - `GET/POST /api/v1/driver/:token`：司机读取任务与幂等签收。
 - `POST /api/v1/import/preview`：Excel 导入预校验；限制 10 MB 和 10,000 行。
 - `GET /api/v1/export`：按仓库当地时区导出库存 Excel。
-- `GET/PATCH /api/v1/users`、`GET /api/v1/settings`：管理员用户和主数据接口。
+- `GET/PATCH /api/v1/users`、`GET/PATCH /api/v1/settings`：管理员用户、当前域名和主数据接口。
 
 Excel 字段映射和拒绝规则见 `docs/field-mapping.md`。日期在表单中按车辆的仓库时区解释，数据库保存为绝对时间，页面和导出时再转换回仓库当地时间。
 
@@ -50,4 +51,4 @@ docker build -t cargo-management .
 docker run --env-file .env -p 3000:3000 cargo-management
 ```
 
-部署前必须执行 `pnpm db:deploy` 和 `pnpm db:seed`，并确保 `APP_URL`、数据库连接和管理员密码使用生产值。
+部署前必须执行 `pnpm db:deploy` 和 `pnpm db:seed`，并确保数据库连接和管理员密码使用生产值。管理员可在“基础设置”中配置生成提货二维码使用的当前域名；未配置时依次使用 `APP_URL` 和当前请求域名。

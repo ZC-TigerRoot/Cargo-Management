@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { can, inventoryDays, transitions } from "../src/lib/domain";
-import { vehicleInput, vehicleUpdateInput } from "../src/lib/validators";
+import { driverSubmission, vehicleInput, vehicleUpdateInput } from "../src/lib/validators";
 import { localInputValue, zonedLocalToIso } from "../src/lib/datetime";
 
 describe("库存领域规则", () => {
@@ -12,6 +12,21 @@ describe("库存领域规则", () => {
     expect(can("viewer", "export")).toBe(false);
   });
   it("事件推导状态", () => expect(transitions.DRIVER_SIGNED).toBe("已完成"));
+});
+
+describe("司机提车凭证校验", () => {
+  const base = {
+    pickupAt: "2026-07-15T08:00:00.000Z",
+    idempotencyKey: "driver-submit-001",
+  };
+
+  it("只上传图片即可提交", () => {
+    expect(driverSubmission.safeParse({ ...base, photoDataUrl: "data:image/jpeg;base64,AQ==" }).success).toBe(true);
+  });
+
+  it("未上传图片时拒绝提交", () => {
+    expect(driverSubmission.safeParse(base).success).toBe(false);
+  });
 });
 
 describe("车辆录入校验", () => {

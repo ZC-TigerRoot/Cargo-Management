@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { Prisma, PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 
@@ -48,12 +47,12 @@ try {
       where: { taskNo: "PU-DEMO-001" },
       create: {
         taskNo: "PU-DEMO-001",
-        tokenHash: createHash("sha256").update(demoToken).digest("hex"),
+        token: demoToken,
         expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
         items: { create: { vehicleId: vehicle.id } },
       },
       update: {
-        tokenHash: createHash("sha256").update(demoToken).digest("hex"),
+        token: demoToken,
         expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
         revokedAt: null,
         submittedAt: null,
