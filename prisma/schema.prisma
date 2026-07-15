@@ -150,6 +150,7 @@ model InventoryEvent {
   correctionOfId String?
   actorId        String?
   actor          User?     @relation(fields: [actorId], references: [id])
+  attachments    Attachment[]
   idempotencyKey String?   @unique
   createdAt      DateTime  @default(now())
 
@@ -184,14 +185,19 @@ model PickupItem {
 }
 
 model Attachment {
-  id        String   @id @default(cuid())
-  vehicleId String?
-  vehicle   Vehicle? @relation(fields: [vehicleId], references: [id])
-  objectKey String   @unique
-  fileName  String
-  mimeType  String
-  size      Int
-  createdAt DateTime @default(now())
+  id               String          @id @default(cuid())
+  vehicleId        String?
+  vehicle          Vehicle?        @relation(fields: [vehicleId], references: [id])
+  inventoryEventId String?
+  inventoryEvent   InventoryEvent? @relation(fields: [inventoryEventId], references: [id])
+  objectKey        String
+  fileName         String
+  mimeType         String
+  size             Int
+  createdAt        DateTime        @default(now())
+
+  @@index([objectKey])
+  @@index([inventoryEventId])
 }
 
 model AuditLog {

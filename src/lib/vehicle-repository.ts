@@ -11,7 +11,10 @@ export const vehicleInclude = {
   warehouse: true,
   events: {
     orderBy: { createdAt: "asc" as const },
-    include: { actor: { select: { name: true } } },
+    include: {
+      actor: { select: { name: true } },
+      attachments: { select: { id: true, fileName: true, mimeType: true, size: true } },
+    },
   },
 } satisfies Prisma.VehicleInclude;
 
@@ -113,6 +116,10 @@ function eventHistory(vehicle: VehicleWithRelations): VehicleEventRecord[] {
       actor: event.actor?.name ?? (typeof payload.actorLabel === "string" ? payload.actorLabel : undefined),
       correctionOfId: event.correctionOfId ?? undefined,
       reason: typeof payload.reason === "string" ? payload.reason : cleared ? "清空错误的业务时间" : undefined,
+      attachments: event.attachments.map(attachment => ({
+        ...attachment,
+        url: `/api/v1/attachments/${encodeURIComponent(attachment.id)}`,
+      })),
     };
   });
 }

@@ -19,6 +19,7 @@
 - 只有管理员可以创建、编辑、启停用户，重置密码并分配角色和数据范围；密码重置会使该用户原有登录会话失效。货代可管理业务和基础设置，但不能访问用户管理。客户只能查看绑定客户名下的车辆；仓管只能查看、录入和修改分配给自己的仓库数据。
 - 权限在页面代理和每个 API handler 中同时校验，写请求还校验同源信息。
 - 提货任务保存可读取的随机令牌，已创建任务的二维码和签收链接可从提货任务页重复查看与下载。
+- 司机现场照片以文件形式保存在 `UPLOAD_DIR`（默认 `./data/uploads`），数据库只保存相对路径和文件元数据；后台通过登录鉴权接口在对应签收时间线节点查看，上传目录不可直接公开。
 - 车辆修改使用版本号进行乐观锁检查；并发冲突返回 HTTP 409，不会静默覆盖其他用户的修改。
 - 车辆创建、字段修改、状态变更、提货任务、司机签收、用户权限和系统设置均在数据库事务中写入审计日志；车辆详情展示修改人、中国标准时间及字段前后值。
 - 车辆表格支持选择显示属性、按属性升降序和调整属性排列顺序，个人显示偏好保存在浏览器中。
@@ -29,7 +30,8 @@
 - `GET/POST/PATCH /api/v1/vehicles`：车辆查询、录入和带版本控制的更正。
 - `GET /api/v1/dashboard`：实时库存指标。
 - `GET/POST /api/v1/pickups`：查询和创建提货二维码任务。
-- `GET/POST /api/v1/driver/:token`：司机读取任务与幂等签收。
+- `GET/POST /api/v1/driver/:token`：司机读取任务与 multipart 图片上传、幂等签收。
+- `GET /api/v1/attachments/:id`：按车辆数据权限读取现场图片。
 - `POST /api/v1/import/preview`：Excel 导入预校验；限制 10 MB 和 10,000 行。
 - `GET /api/v1/export`：按中国标准时间导出库存 Excel，并包含出入库金额与 BOE 字段。
 - `GET/POST/PATCH /api/v1/users`、`GET/PATCH /api/v1/settings`：管理员用户、当前域名和主数据接口。
@@ -49,7 +51,8 @@ Docker 镜像会固定并启用 pnpm 11.7.0：
 
 ```bash
 docker build -t cargo-management .
-docker run --env-file .env -p 3000:3000 cargo-management
+docker volume create cargo_uploads
+docker run --env-file .env -e UPLOAD_DIR=/app/data/uploads -v cargo_uploads:/app/data/uploads -p 3000:3000 cargo-management
 ```
 
-部署前必须执行 `pnpm db:deploy` 和 `pnpm db:seed`，并确保数据库连接和管理员密码使用生产值。管理员可在“基础设置”中配置生成提货二维码使用的当前域名；未配置时依次使用 `APP_URL` 和当前请求域名。
+部署前必须执行 `pnpm db:deploy` 和 `pnpm db:seed`，并确保数据库连接和管理员密码使用生产值。生产环境还必须把 `UPLOAD_DIR` 指向持久化、可写且会备份的目录；多实例部署时应挂载同一共享文件系统。管理员可在“基础设置”中配置生成提货二维码使用的当前域名；未配置时依次使用 `APP_URL` 和当前请求域名。

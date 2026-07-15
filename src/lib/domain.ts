@@ -55,6 +55,15 @@ export type VehicleEventRecord = {
   actor?: string;
   correctionOfId?: string;
   reason?: string;
+  attachments?: VehicleAttachmentRecord[];
+};
+
+export type VehicleAttachmentRecord = {
+  id: string;
+  fileName: string;
+  mimeType: string;
+  size: number;
+  url: string;
 };
 
 export type VehicleAuditChange = {

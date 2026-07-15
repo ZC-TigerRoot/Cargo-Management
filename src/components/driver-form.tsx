@@ -19,15 +19,6 @@ const showTime = (value: string) => new Intl.DateTimeFormat("zh-CN", {
 
 const maskVin = (vin: string) => `············${vin.slice(-6)}`;
 
-function fileDataUrl(file: File) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(new Error("无法读取车辆照片"));
-    reader.readAsDataURL(file);
-  });
-}
-
 export default function DriverForm({ token }: { token: string }) {
   const [task, setTask] = useState<Task>();
   const [loading, setLoading] = useState(true);
@@ -67,15 +58,12 @@ export default function DriverForm({ token }: { token: string }) {
       if (!(photo instanceof File) || !photo.size) throw new Error("请上传车辆照片");
       if (!photo.type.startsWith("image/")) throw new Error("请上传有效的图片文件");
       if (photo.size > 5_000_000) throw new Error("车辆照片不能超过 5 MB");
-      const photoDataUrl = await fileDataUrl(photo);
       idempotencyKey.current ??= crypto.randomUUID();
+      form.set("pickupAt", new Date().toISOString());
+      form.set("idempotencyKey", idempotencyKey.current);
       const response = await fetch(`/api/v1/driver/${encodeURIComponent(token)}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          pickupAt: new Date().toISOString(), photoDataUrl,
-          idempotencyKey: idempotencyKey.current,
-        }),
+        body: form,
       });
       const result = await response.json();
       if (!response.ok) {

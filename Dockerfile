@@ -11,5 +11,6 @@ ENV NODE_ENV=production
 ENV TZ=Asia/Shanghai
 RUN corepack enable && corepack prepare pnpm@11.7.0 --activate
 COPY --from=build /app ./
+RUN mkdir -p /app/data/uploads
 EXPOSE 3000
 CMD ["pnpm","start"]

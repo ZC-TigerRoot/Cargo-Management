@@ -26,12 +26,14 @@ describe("司机提车凭证校验", () => {
     idempotencyKey: "driver-submit-001",
   };
 
-  it("只上传图片即可提交", () => {
-    expect(driverSubmission.safeParse({ ...base, photoDataUrl: "data:image/jpeg;base64,AQ==" }).success).toBe(true);
+  it("只校验签收元数据，不接收 Base64 图片内容", () => {
+    const result = driverSubmission.safeParse({ ...base, photoDataUrl: "data:image/jpeg;base64,AQ==" });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data).toEqual(base);
   });
 
-  it("未上传图片时拒绝提交", () => {
-    expect(driverSubmission.safeParse(base).success).toBe(false);
+  it("拒绝无效签收时间", () => {
+    expect(driverSubmission.safeParse({ ...base, pickupAt: "invalid" }).success).toBe(false);
   });
 });
 
