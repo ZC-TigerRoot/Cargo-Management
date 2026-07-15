@@ -67,15 +67,18 @@ jobs:
           set -euo pipefail
           test -f .next/standalone/server.js
           cp -a public .next/standalone/
+          cp scripts/standalone-supervisor.cjs .next/standalone/supervisor.cjs
           mkdir -p .next/standalone/.next
           cp -a .next/static .next/standalone/.next/
           find .next/standalone -type f -name '.env*' -delete
 
-          prisma_engine="$(find .next/standalone -type f -name '*rhel-openssl-3.0.x*' -print -quit)"
-          if [[ -z "${prisma_engine}" ]]; then
-            echo "CentOS-compatible Prisma engine is missing from the package" >&2
-            exit 1
-          fi
+          for target in rhel-openssl-3.0.x rhel-openssl-1.0.x; do
+            prisma_engine="$(find .next/standalone -type f -name "*${target}*" -print -quit)"
+            if [[ -z "${prisma_engine}" ]]; then
+              echo "Prisma ${target} engine is missing from the package" >&2
+              exit 1
+            fi
+          done
 
           archive="cargo-linux-x64-${GITHUB_SHA}.tar.gz"
           tar -C .next/standalone -czf "${archive}" .
