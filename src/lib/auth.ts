@@ -38,6 +38,7 @@ export async function requireUser(permission: Permission) {
     include: { warehouseScopes: { select: { warehouseId: true } } },
   });
   if (!user?.active) throw new AuthorizationError(401, "账号已停用或不存在");
+  if (user.sessionVersion !== session.sessionVersion) throw new AuthorizationError(401, "登录状态已失效，请重新登录");
   const role = roleNames[user.role];
   if (!can(role, permission)) throw new AuthorizationError(403, "当前账号没有执行此操作的权限");
   return { ...user, roleName: role };

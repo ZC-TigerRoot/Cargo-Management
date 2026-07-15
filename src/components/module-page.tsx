@@ -7,12 +7,12 @@ import { Download, FileSpreadsheet, Menu, Plus, Search, UploadCloud } from "luci
 import SideNav from "./side-nav";
 import VehicleFormModal from "./vehicle-form-modal";
 import VehicleTable from "./vehicle-table";
-import { can, inventoryDays, roleLabels, type BusinessType, type Role, type VehicleRecord } from "@/lib/domain";
+import { can, inventoryDays, roleLabels, type BusinessType, type VehicleRecord } from "@/lib/domain";
 import { useVehicleRecords } from "@/lib/use-vehicle-records";
 import { useSession } from "@/lib/use-session";
 import { CHINA_TIME_ZONE, chinaDateTime, localInputValue, zonedLocalToIso } from "@/lib/datetime";
 
-type Kind = "vehicles" | "overseas" | "domestic" | "pickups" | "imports" | "reports" | "users" | "settings";
+type Kind = "vehicles" | "overseas" | "domestic" | "pickups" | "imports" | "reports" | "settings";
 const meta: Record<Kind, { eyebrow: string; title: string; description: string }> = {
   vehicles: { eyebrow: "车辆中心", title: "车辆台账", description: "查询全部车辆及其当前库存状态" },
   overseas: { eyebrow: "海外业务", title: "海外仓业务", description: "按提单管理港口、船期、保税入库与放车节点" },
@@ -20,7 +20,6 @@ const meta: Record<Kind, { eyebrow: string; title: string; description: string }
   pickups: { eyebrow: "现场协同", title: "提货任务", description: "生成司机二维码并跟进提车签收" },
   imports: { eyebrow: "数据迁移", title: "导入记录", description: "预校验 Excel 并处理异常数据" },
   reports: { eyebrow: "分析中心", title: "库存报表", description: "查看库存账龄、仓库分布与出入库趋势" },
-  users: { eyebrow: "系统管理", title: "账号与权限", description: "管理用户角色和业务数据范围" },
   settings: { eyebrow: "系统管理", title: "基础设置", description: "查看仓库与客户主数据" },
 };
 
@@ -56,7 +55,6 @@ export default function ModulePage({ kind }: { kind: Kind }) {
         {kind === "pickups" && <PickupModule records={records} canCreate={can(role, "create")} />}
         {kind === "imports" && <ImportModule />}
         {kind === "reports" && <ReportModule records={records} />}
-        {kind === "users" && <UsersModule />}
         {kind === "settings" && <SettingsModule />}
       </section>
     </main>
@@ -171,23 +169,6 @@ function ReportModule({ records }: { records: VehicleRecord[] }) {
   const counts = buckets.map(([name, min, max]) => ({ name, count: days.filter(value => value >= min && value <= max).length }));
   const max = Math.max(1, ...counts.map(item => item.count));
   return <div className="report-grid"><article className="panel report-card"><span>实时在库/在途</span><strong>{inStorage.length}</strong><p>按当前车辆台账计算</p></article><article className="panel report-card"><span>平均库存天数</span><strong>{average}</strong><p>仅统计未出库车辆</p></article><article className="panel report-card"><span>30 天以上</span><strong>{counts[3].count}</strong><p>需要业务跟进</p></article><article className="panel age-panel report-wide"><h3>库存账龄分布</h3><div className="age-bars">{counts.map(item => <div key={item.name}><span>{item.name}</span><div><i className="green" style={{ width: `${item.count / max * 100}%` }}/></div><b>{item.count}</b></div>)}</div></article></div>;
-}
-
-type UserRow = { id: string; name: string; email: string; role: Role; active: boolean; customerId: string | null; warehouseIds: string[] };
-type UserOptions = { customers: { id: string; name: string }[]; warehouses: { id: string; name: string; location: string }[] };
-function UsersModule() {
-  const [users, setUsers] = useState<UserRow[]>([]);
-  const [options, setOptions] = useState<UserOptions>({ customers: [], warehouses: [] });
-  const [error, setError] = useState("");
-  useEffect(() => { fetch("/api/v1/users").then(async response => { const result = await response.json(); if (!response.ok) throw new Error(result.message); setUsers(result.data); setOptions(result.meta); }).catch(reason => setError(reason.message || "无法读取用户")); }, []);
-  async function update(user: UserRow, changes: Partial<Pick<UserRow, "active" | "role" | "customerId" | "warehouseIds">>) {
-    setError("");
-    const response = await fetch("/api/v1/users", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: user.id, ...changes }) });
-    const result = await response.json();
-    if (!response.ok) return setError(result.message || "更新失败");
-    setUsers(current => current.map(item => item.id === result.data.id ? result.data : item));
-  }
-  return <article className="panel simple-list user-scope-list">{users.map(user => <div key={user.id}><span className="avatar">{user.name[0]}</span><p><b>{user.name}</b><small>{user.email} · {user.active ? "启用" : "停用"}</small></p><select value={user.role} onChange={event => update(user, { role: event.target.value as Role })}>{Object.entries(roleLabels).map(([role, label]) => <option value={role} key={role}>{label}</option>)}</select><div className="scope-editor">{user.role === "customer" ? <label>绑定客户<select value={user.customerId ?? ""} onChange={event => update(user, { customerId: event.target.value || null })}><option value="">未分配</option>{options.customers.map(customer => <option value={customer.id} key={customer.id}>{customer.name}</option>)}</select></label> : user.role === "warehouse" ? <label>名下仓库<select multiple value={user.warehouseIds} onChange={event => update(user, { warehouseIds: [...event.currentTarget.selectedOptions].map(option => option.value) })}>{options.warehouses.map(warehouse => <option value={warehouse.id} key={warehouse.id}>{warehouse.name} · {warehouse.location}</option>)}</select></label> : <small>可访问全部车辆数据</small>}</div><button onClick={() => update(user, { active: !user.active })}>{user.active ? "停用" : "启用"}</button></div>)}{error && <p className="form-error">{error}</p>}</article>;
 }
 
 type SettingsData = { publicBaseUrl: string; warehouses: { id: string; name: string; location: string; bonded: boolean }[]; customers: { id: string; name: string; vehicleCount: number }[] };

@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
     if (!user?.active || !await bcrypt.compare(parsed.data.password, user.passwordHash)) {
       return NextResponse.json({ error: "INVALID_CREDENTIALS", message: "邮箱或密码错误" }, { status: 401 });
     }
-    const token = await signSession({ userId: user.id, email: user.email, name: user.name, role: roleNames[user.role] });
+    const token = await signSession({ userId: user.id, email: user.email, name: user.name, role: roleNames[user.role], sessionVersion: user.sessionVersion });
     const response = NextResponse.json({ data: { id: user.id, email: user.email, name: user.name, role: roleNames[user.role] } });
     response.cookies.set(SESSION_COOKIE, token, sessionCookieOptions);
     return response;

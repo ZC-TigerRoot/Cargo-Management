@@ -15,7 +15,7 @@ try {
   await prisma.user.upsert({
     where: { email },
     create: { email, name, passwordHash, role: "ADMIN" },
-    update: { name, passwordHash, role: "ADMIN", active: true },
+    update: { name, passwordHash, role: "ADMIN", active: true, sessionVersion: { increment: 1 } },
   });
   console.log(`Administrator ${email} is ready`);
 

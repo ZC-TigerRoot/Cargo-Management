@@ -1,17 +1,30 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
+import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { assertSameOrigin, AuthorizationError, requestIp, requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { SESSION_COOKIE, sessionCookieOptions } from "@/lib/session";
+
+const createInput = z.object({
+  name: z.string().trim().min(1).max(100),
+  email: z.email().trim().transform(value => value.toLowerCase()),
+  password: z.string().min(12).max(128),
+  role: z.enum(["warehouse", "forwarder", "customer", "admin"]),
+  customerId: z.string().min(1).nullable().optional(),
+  warehouseIds: z.array(z.string().min(1)).max(100).optional(),
+});
 
 const updateInput = z.object({
   id: z.string().min(1),
   active: z.boolean().optional(),
   name: z.string().trim().min(1).max(100).optional(),
+  email: z.email().trim().transform(value => value.toLowerCase()).optional(),
+  password: z.string().min(12).max(128).optional(),
   role: z.enum(["warehouse", "forwarder", "customer", "admin"]).optional(),
   customerId: z.string().min(1).nullable().optional(),
   warehouseIds: z.array(z.string().min(1)).max(100).optional(),
-}).refine(data => data.active !== undefined || data.name !== undefined || data.role !== undefined ||
+}).refine(data => data.active !== undefined || data.name !== undefined || data.email !== undefined || data.password !== undefined || data.role !== undefined ||
   data.customerId !== undefined || data.warehouseIds !== undefined, "至少提供一个变更字段");
 
 const roleToDomain = { WAREHOUSE: "warehouse", FORWARDER: "forwarder", CUSTOMER: "customer", ADMIN: "admin" } as const;
@@ -25,6 +38,7 @@ type UserRow = {
   active: boolean;
   customerId: string | null;
   warehouseScopes: { warehouseId: string }[];
+  createdAt: Date;
 };
 
 const userData = (user: UserRow) => ({
@@ -35,6 +49,7 @@ const userData = (user: UserRow) => ({
   active: user.active,
   customerId: user.customerId,
   warehouseIds: user.warehouseScopes.map(scope => scope.warehouseId),
+  createdAt: user.createdAt.toISOString(),
 });
 
 const select = {
@@ -45,7 +60,17 @@ const select = {
   active: true,
   customerId: true,
   warehouseScopes: { select: { warehouseId: true } },
+  createdAt: true,
 } as const;
+
+async function validateScope(customerId: string | null, warehouseIds: string[]) {
+  if (customerId && !await prisma.customer.findUnique({ where: { id: customerId }, select: { id: true } })) {
+    return NextResponse.json({ error: "CUSTOMER_NOT_FOUND", message: "选择的客户不存在" }, { status: 422 });
+  }
+  if (warehouseIds.length && await prisma.warehouse.count({ where: { id: { in: warehouseIds } } }) !== warehouseIds.length) {
+    return NextResponse.json({ error: "WAREHOUSE_NOT_FOUND", message: "部分仓库不存在" }, { status: 422 });
+  }
+}
 
 export async function GET() {
   try {
@@ -63,12 +88,66 @@ export async function GET() {
   }
 }
 
+export async function POST(req: NextRequest) {
+  try {
+    const actor = await requireUser("manageUsers");
+    assertSameOrigin(req);
+    const parsed = createInput.safeParse(await req.json());
+    if (!parsed.success) {
+      return NextResponse.json({ error: "VALIDATION_ERROR", message: "请检查账号信息，密码至少需要 12 位", issues: parsed.error.flatten() }, { status: 422 });
+    }
+
+    const role = roleToPrisma[parsed.data.role];
+    const customerId = role === "CUSTOMER" ? parsed.data.customerId ?? null : null;
+    const warehouseIds = role === "WAREHOUSE" ? [...new Set(parsed.data.warehouseIds ?? [])] : [];
+    const invalidScope = await validateScope(customerId, warehouseIds);
+    if (invalidScope) return invalidScope;
+
+    const passwordHash = await bcrypt.hash(parsed.data.password, 12);
+    const created = await prisma.$transaction(async tx => {
+      const user = await tx.user.create({
+        data: {
+          name: parsed.data.name,
+          email: parsed.data.email,
+          passwordHash,
+          role,
+          customerId,
+          warehouseScopes: { create: warehouseIds.map(warehouseId => ({ warehouseId })) },
+        },
+        select,
+      });
+      await tx.auditLog.create({
+        data: {
+          actorId: actor.id,
+          action: "USER_CREATED",
+          entityType: "User",
+          entityId: user.id,
+          after: userData(user),
+          ip: requestIp(req),
+        },
+      });
+      return user;
+    });
+    return NextResponse.json({ data: userData(created) }, { status: 201 });
+  } catch (error) {
+    if (error instanceof AuthorizationError) return NextResponse.json({ error: "FORBIDDEN", message: error.message }, { status: error.status });
+    if (error instanceof SyntaxError) return NextResponse.json({ error: "INVALID_JSON", message: "请求内容不是有效的 JSON" }, { status: 400 });
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      const target = Array.isArray(error.meta?.target) ? error.meta.target.join(",") : String(error.meta?.target ?? "");
+      if (target.includes("email")) return NextResponse.json({ error: "EMAIL_EXISTS", message: "该邮箱已存在" }, { status: 409 });
+      return NextResponse.json({ error: "SCOPE_CONFLICT", message: "用户数据范围重复，请刷新后重试" }, { status: 409 });
+    }
+    console.error(error);
+    return NextResponse.json({ error: "DATABASE_ERROR", message: "创建用户失败" }, { status: 503 });
+  }
+}
+
 export async function PATCH(req: NextRequest) {
   try {
     const actor = await requireUser("manageUsers");
     assertSameOrigin(req);
     const parsed = updateInput.safeParse(await req.json());
-    if (!parsed.success) return NextResponse.json({ error: "VALIDATION_ERROR", issues: parsed.error.flatten() }, { status: 422 });
+    if (!parsed.success) return NextResponse.json({ error: "VALIDATION_ERROR", message: "请检查用户信息，密码至少需要 12 位", issues: parsed.error.flatten() }, { status: 422 });
     if (parsed.data.id === actor.id && parsed.data.active === false) {
       return NextResponse.json({ error: "CANNOT_DISABLE_SELF", message: "不能停用当前登录账号" }, { status: 409 });
     }
@@ -88,12 +167,9 @@ export async function PATCH(req: NextRequest) {
     const warehouseIds = targetRole === "WAREHOUSE"
       ? parsed.data.warehouseIds === undefined ? before.warehouseScopes.map(scope => scope.warehouseId) : [...new Set(parsed.data.warehouseIds)]
       : [];
-    if (customerId && !await prisma.customer.findUnique({ where: { id: customerId }, select: { id: true } })) {
-      return NextResponse.json({ error: "CUSTOMER_NOT_FOUND", message: "选择的客户不存在" }, { status: 422 });
-    }
-    if (warehouseIds.length && await prisma.warehouse.count({ where: { id: { in: warehouseIds } } }) !== warehouseIds.length) {
-      return NextResponse.json({ error: "WAREHOUSE_NOT_FOUND", message: "部分仓库不存在" }, { status: 422 });
-    }
+    const invalidScope = await validateScope(customerId, warehouseIds);
+    if (invalidScope) return invalidScope;
+    const passwordHash = parsed.data.password ? await bcrypt.hash(parsed.data.password, 12) : undefined;
 
     const updated = await prisma.$transaction(async tx => {
       const user = await tx.user.update({
@@ -101,6 +177,9 @@ export async function PATCH(req: NextRequest) {
         data: {
           active: parsed.data.active,
           name: parsed.data.name,
+          email: parsed.data.email,
+          passwordHash,
+          sessionVersion: parsed.data.password ? { increment: 1 } : undefined,
           role: targetRole,
           customerId,
           warehouseScopes: {
@@ -113,7 +192,7 @@ export async function PATCH(req: NextRequest) {
       await tx.auditLog.create({
         data: {
           actorId: actor.id,
-          action: "USER_UPDATED",
+          action: parsed.data.password ? "USER_PASSWORD_RESET" : "USER_UPDATED",
           entityType: "User",
           entityId: user.id,
           before: userData(before),
@@ -123,11 +202,17 @@ export async function PATCH(req: NextRequest) {
       });
       return user;
     });
-    return NextResponse.json({ data: userData(updated) });
+    const response = NextResponse.json({ data: userData(updated) });
+    if (parsed.data.password && parsed.data.id === actor.id) {
+      response.cookies.set(SESSION_COOKIE, "", { ...sessionCookieOptions, maxAge: 0 });
+    }
+    return response;
   } catch (error) {
     if (error instanceof AuthorizationError) return NextResponse.json({ error: "FORBIDDEN", message: error.message }, { status: error.status });
     if (error instanceof SyntaxError) return NextResponse.json({ error: "INVALID_JSON", message: "请求内容不是有效的 JSON" }, { status: 400 });
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      const target = Array.isArray(error.meta?.target) ? error.meta.target.join(",") : String(error.meta?.target ?? "");
+      if (target.includes("email")) return NextResponse.json({ error: "EMAIL_EXISTS", message: "该邮箱已存在" }, { status: 409 });
       return NextResponse.json({ error: "SCOPE_CONFLICT", message: "用户数据范围重复，请刷新后重试" }, { status: 409 });
     }
     console.error(error);

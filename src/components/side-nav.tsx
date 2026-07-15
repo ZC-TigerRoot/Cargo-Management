@@ -14,8 +14,8 @@ const items = [
   { href: "/reports", label: "库存报表", icon: BarChart3 },
 ];
 const systemItems = [
-  { href: "/users", label: "账号与权限", icon: Users },
-  { href: "/settings", label: "基础设置", icon: Settings },
+  { href: "/users", label: "用户管理", icon: Users, permission: "manageUsers" as const },
+  { href: "/settings", label: "基础设置", icon: Settings, permission: "manageSettings" as const },
 ];
 
 export default function SideNav({ open=false, onClose, roleLabel="货代", userName="", role }:{open?:boolean;onClose?:()=>void;roleLabel?:string;userName?:string;role?:Role}) {
@@ -23,7 +23,6 @@ export default function SideNav({ open=false, onClose, roleLabel="货代", userN
   const active=(href:string)=>href==="/"?pathname==="/":pathname===href||pathname.startsWith(`${href}/`);
   const visibleItems = items.filter(item => item.href !== "/pickups" || !role || can(role, "coordinatePickups"))
     .filter(item => item.href !== "/imports" || !role || can(role, "create"));
-  return <aside className={open?"sidebar open":"sidebar"}><div className="logo"><span>车</span><div><b>车仓通</b><small>CARGO FLOW</small></div><button onClick={onClose} aria-label="关闭菜单"><X/></button></div><nav>{visibleItems.map(Item=><Link key={Item.href} href={Item.href} className={active(Item.href)?"active":""} onClick={onClose}><Item.icon/>{Item.label}</Link>)}{role && canManageSystem(role) && <><div className="nav-label">系统</div>{systemItems.map(Item=><Link key={Item.href} href={Item.href} className={active(Item.href)?"active":""} onClick={onClose}><Item.icon/>{Item.label}</Link>)}</>}</nav><div className="side-footer"><span className="avatar">{userName[0] || "用"}</span><div><b>{userName || "当前用户"}</b><small>{roleLabel}</small></div></div></aside>;
+  const visibleSystemItems = role ? systemItems.filter(item => can(role, item.permission)) : [];
+  return <aside className={open?"sidebar open":"sidebar"}><div className="logo"><span>车</span><div><b>车仓通</b><small>CARGO FLOW</small></div><button onClick={onClose} aria-label="关闭菜单"><X/></button></div><nav>{visibleItems.map(Item=><Link key={Item.href} href={Item.href} className={active(Item.href)?"active":""} onClick={onClose}><Item.icon/>{Item.label}</Link>)}{visibleSystemItems.length > 0 && <><div className="nav-label">系统</div>{visibleSystemItems.map(Item=><Link key={Item.href} href={Item.href} className={active(Item.href)?"active":""} onClick={onClose}><Item.icon/>{Item.label}</Link>)}</>}</nav><div className="side-footer"><span className="avatar">{userName[0] || "用"}</span><div><b>{userName || "当前用户"}</b><small>{roleLabel}</small></div></div></aside>;
 }
-
-const canManageSystem = (role: Role) => role === "admin" || role === "forwarder";

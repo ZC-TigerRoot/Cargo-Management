@@ -9,6 +9,7 @@ export type SessionClaims = {
   email: string;
   name: string;
   role: Role;
+  sessionVersion: number;
 };
 
 function secret() {
@@ -34,11 +35,14 @@ export async function verifySession(token?: string): Promise<SessionClaims | und
     const { payload } = await jwtVerify(token, secret(), { algorithms: ["HS256"], issuer: "cargo-management", audience: "cargo-management-web" });
     if (!payload.sub || typeof payload.email !== "string" || typeof payload.name !== "string" ||
       !["warehouse", "forwarder", "customer", "admin"].includes(String(payload.role))) return undefined;
+    const sessionVersion = payload.sessionVersion === undefined ? 0 : Number(payload.sessionVersion);
+    if (!Number.isInteger(sessionVersion) || sessionVersion < 0) return undefined;
     return {
       userId: payload.sub,
       email: payload.email,
       name: payload.name,
       role: payload.role as Role,
+      sessionVersion,
     };
   } catch {
     return undefined;

@@ -8,7 +8,6 @@ export async function proxy(req: NextRequest) {
   const publicRequest = pathname === "/login" || pathname.startsWith("/driver/") || publicApiPrefixes.some(prefix => pathname.startsWith(prefix));
   const session = await verifySession(req.cookies.get(SESSION_COOKIE)?.value);
 
-  if (pathname === "/login" && session) return NextResponse.redirect(new URL("/", req.url));
   if (publicRequest) return NextResponse.next();
 
   if (!session) {
@@ -20,7 +19,10 @@ export async function proxy(req: NextRequest) {
     return NextResponse.redirect(login);
   }
 
-  if ((pathname.startsWith("/users") || pathname.startsWith("/settings")) && !["admin", "forwarder"].includes(session.role)) {
+  if (pathname.startsWith("/users") && session.role !== "admin") {
+    return NextResponse.redirect(new URL("/", req.url));
+  }
+  if (pathname.startsWith("/settings") && !["admin", "forwarder"].includes(session.role)) {
     return NextResponse.redirect(new URL("/", req.url));
   }
   if (session.role === "customer" && (pathname.startsWith("/pickups") || pathname.startsWith("/imports"))) {

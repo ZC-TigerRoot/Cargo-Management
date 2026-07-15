@@ -90,7 +90,7 @@ export type Permission = "view" | "create" | "correct" | "export" | "coordinateP
 export const can = (role: Role, action: Permission) => {
   const grants: Record<Role, string[]> = {
     warehouse: ["view", "create", "correct", "coordinatePickups"],
-    forwarder: ["view", "create", "correct", "export", "coordinatePickups", "manageUsers", "manageSettings"],
+    forwarder: ["view", "create", "correct", "export", "coordinatePickups", "manageSettings"],
     customer: ["view"],
     admin: ["view", "create", "correct", "export", "coordinatePickups", "manageUsers", "manageSettings"],
   };

@@ -11,6 +11,12 @@ describe("库存领域规则", () => {
     expect(can("warehouse", "export")).toBe(false);
     expect(can("customer", "export")).toBe(false);
   });
+  it("只有管理员可以管理用户", () => {
+    expect(can("admin", "manageUsers")).toBe(true);
+    expect(can("forwarder", "manageUsers")).toBe(false);
+    expect(can("warehouse", "manageUsers")).toBe(false);
+    expect(can("customer", "manageUsers")).toBe(false);
+  });
   it("事件推导状态", () => expect(transitions.DRIVER_SIGNED).toBe("已完成"));
 });
 
