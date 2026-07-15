@@ -1,0 +1,90 @@
+name: Build production package
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma Client
+        env:
+          # Prisma validates its datasource while generating the client but does
+          # not connect to this placeholder database during this step.
+          DB_HOST: "127.0.0.1"
+          DB_PORT: "5432"
+          DB_NAME: "cargo_ci"
+          DB_USER: "cargo_ci"
+          DB_PASSWORD: "not-a-real-password"
+        run: pnpm run db:generate
+
+      - name: Run tests
+        run: pnpm test
+
+      - name: Build application
+        run: pnpm run build
+
+      - name: Assemble standalone package
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f .next/standalone/server.js
+          cp -a public .next/standalone/
+          mkdir -p .next/standalone/.next
+          cp -a .next/static .next/standalone/.next/
+          find .next/standalone -type f -name '.env*' -delete
+
+          prisma_engine="$(find .next/standalone -type f -name '*rhel-openssl-3.0.x*' -print -quit)"
+          if [[ -z "${prisma_engine}" ]]; then
+            echo "CentOS-compatible Prisma engine is missing from the package" >&2
+            exit 1
+          fi
+
+          archive="cargo-linux-x64-${GITHUB_SHA}.tar.gz"
+          tar -C .next/standalone -czf "${archive}" .
+          archive_files="${RUNNER_TEMP}/cargo-${GITHUB_SHA}.files"
+          tar -tzf "${archive}" > "${archive_files}"
+          if grep -Eq '(^|/)\.env($|\.)' "${archive_files}"; then
+            echo "Refusing to upload a package containing environment files" >&2
+            exit 1
+          fi
+          sha256sum "${archive}" > "${archive}.sha256"
+
+      - name: Upload production package
+        uses: actions/upload-artifact@v4
+        with:
+          name: cargo-linux-x64-${{ github.sha }}
+          path: |
+            cargo-linux-x64-${{ github.sha }}.tar.gz
+            cargo-linux-x64-${{ github.sha }}.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 14
