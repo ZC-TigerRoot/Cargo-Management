@@ -31,7 +31,7 @@ export default function Login() {
   return <main className="login-page"><section className="login-card">
     <div className="brand-mark">车</div><p className="eyebrow">CARGO FLOW</p><h1>欢迎回到车仓通</h1>
     <p className="muted">使用已开通的公司账号进入汽车仓储协同平台</p>
-    <form onSubmit={submit}>
+    <form action="/login" method="post" onSubmit={submit}>
       <label>邮箱地址<input name="email" type="email" autoComplete="username" required /></label>
       <label>密码<input name="password" type="password" autoComplete="current-password" minLength={8} required /></label>
       {error && <p className="form-error" role="alert">{error}</p>}

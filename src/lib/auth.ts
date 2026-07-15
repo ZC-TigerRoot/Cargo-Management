@@ -5,6 +5,7 @@ import type { NextRequest } from "next/server";
 import type { Prisma, Role as PrismaRole } from "@prisma/client";
 import { can, type Permission, type Role } from "./domain";
 import { prisma } from "./prisma";
+import { isSameOriginRequest } from "./request-origin";
 import { SESSION_COOKIE, verifySession } from "./session";
 
 export class AuthorizationError extends Error {
@@ -72,8 +73,7 @@ export async function requirePayloadWarehouseInScope(user: AccessUser, warehouse
 }
 
 export function assertSameOrigin(req: NextRequest) {
-  const origin = req.headers.get("origin");
-  if (origin && origin !== req.nextUrl.origin) throw new AuthorizationError(403, "请求来源无效");
+  if (!isSameOriginRequest(req)) throw new AuthorizationError(403, "请求来源无效");
 }
 
 export function requestIp(req: NextRequest) {
