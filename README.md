@@ -6,7 +6,7 @@
 
 要求 Node.js 22、pnpm 11 和 PostgreSQL 16。
 
-1. 复制 `.env.example` 为 `.env`，设置不少于 32 字符的随机 `AUTH_SECRET`，并替换管理员邮箱和密码。
+1. 复制 `.env.example` 为 `.env`，填写 `DB_HOST`、`DB_PORT`、`DB_NAME`、`DB_USER` 和 `DB_PASSWORD`，设置不少于 32 字符的随机 `AUTH_SECRET`，并替换管理员邮箱和密码。
 2. 使用 `docker compose up -d` 启动 PostgreSQL。
 3. 执行 `pnpm install`、`pnpm db:generate`、`pnpm db:migrate` 和 `pnpm db:seed`。
 4. 执行 `pnpm dev`，访问 `http://localhost:3000/login`。

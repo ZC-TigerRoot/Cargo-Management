@@ -1,7 +1,9 @@
 import { Prisma, PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 
-const prisma = new PrismaClient();
+import { databaseUrlFromEnv } from "../database-url.mjs";
+
+const prisma = new PrismaClient({ datasourceUrl: databaseUrlFromEnv() });
 const email = process.env.ADMIN_EMAIL?.trim().toLowerCase();
 const password = process.env.ADMIN_PASSWORD;
 const name = process.env.ADMIN_NAME?.trim() || "系统管理员";
