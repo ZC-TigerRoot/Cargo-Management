@@ -51,6 +51,14 @@ jobs:
         run: pnpm test
 
       - name: Build application
+        env:
+          # Next.js evaluates API route modules while collecting page data, so
+          # Prisma also needs a syntactically valid datasource during the build.
+          DB_HOST: "127.0.0.1"
+          DB_PORT: "5432"
+          DB_NAME: "cargo_ci"
+          DB_USER: "cargo_ci"
+          DB_PASSWORD: "not-a-real-password"
         run: pnpm run build
 
       - name: Assemble standalone package
