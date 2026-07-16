@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { ArrowDown, ArrowUp, ArrowUpDown, SlidersHorizontal } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, SlidersHorizontal, Trash2 } from "lucide-react";
 import { inventoryDays, type VehicleRecord } from "@/lib/domain";
 import { chinaDateTime } from "@/lib/datetime";
 
@@ -14,9 +14,9 @@ type Column = {
 };
 
 const columns: Column[] = [
-  { id: "vehicle", label: "车辆", value: vehicle => `${vehicle.model} ${vehicle.vin}`, render: vehicle => <><b>{vehicle.model}</b><small>{vehicle.vin}</small></> },
-  { id: "business", label: "业务 / 批次", value: vehicle => `${vehicle.type} ${vehicle.referenceNo}`, render: vehicle => <><span className={`type type-${vehicle.type}`}>{vehicle.type === "overseas" ? "海外仓" : "国内仓"}</span><small>{vehicle.referenceNo}</small></> },
-  { id: "warehouse", label: "仓库", value: vehicle => `${vehicle.warehouse} ${vehicle.warehouseLocation}`, render: vehicle => <>{vehicle.warehouse}<small>{vehicle.warehouseLocation}</small></> },
+  { id: "vehicle", label: "车辆", value: vehicle => `${vehicle.model ?? ""} ${vehicle.vin ?? ""}`, render: vehicle => <><b>{vehicle.model || "未填写车型"}</b><small>{vehicle.vin || "未填写车架号"}</small></> },
+  { id: "business", label: "业务 / 批次", value: vehicle => `${vehicle.type} ${vehicle.referenceNo ?? ""}`, render: vehicle => <><span className={`type type-${vehicle.type}`}>{vehicle.type === "overseas" ? "海外仓" : "国内仓"}</span><small>{vehicle.referenceNo || "未填写批次"}</small></> },
+  { id: "warehouse", label: "仓库", value: vehicle => `${vehicle.warehouse ?? ""} ${vehicle.warehouseLocation ?? ""}`, render: vehicle => <>{vehicle.warehouse || "—"}<small>{vehicle.warehouseLocation || "未填写地点"}</small></> },
   { id: "customer", label: "所属客户", value: vehicle => vehicle.customer },
   { id: "inventoryDays", label: "库存天数", value: vehicle => inventoryDays(vehicle.inboundAt, vehicle.outboundAt), render: vehicle => <>{inventoryDays(vehicle.inboundAt, vehicle.outboundAt)} 天</> },
   { id: "status", label: "状态", value: vehicle => vehicle.status, render: vehicle => <span className={`status status-${vehicle.status}`}>{vehicle.status}</span> },
@@ -47,12 +47,14 @@ function validPreferences(value: unknown): value is Preferences {
     (data.direction === "asc" || data.direction === "desc");
 }
 
-export default function VehicleTable({ rows, storageKey = "cargo.vehicle-table" }: { rows: VehicleRecord[]; storageKey?: string }) {
+export default function VehicleTable({ rows, storageKey = "cargo.vehicle-table", canDelete = false, onDeleted }: { rows: VehicleRecord[]; storageKey?: string; canDelete?: boolean; onDeleted?: (id: string) => void }) {
   const [order, setOrder] = useState(defaultOrder);
   const [visible, setVisible] = useState(defaultVisible);
   const [sort, setSort] = useState("updatedAt");
   const [direction, setDirection] = useState<"asc" | "desc">("desc");
   const [ready, setReady] = useState(false);
+  const [deletingId, setDeletingId] = useState("");
+  const [deleteError, setDeleteError] = useState("");
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
@@ -112,7 +114,29 @@ export default function VehicleTable({ rows, storageKey = "cargo.vehicle-table" 
     setDirection("desc");
   }
 
+  async function remove(vehicle: VehicleRecord) {
+    const label = vehicle.vin || vehicle.model || "这条未命名车辆记录";
+    if (!window.confirm(`确认永久删除“${label}”？相关提货任务、业务事件和附件也会一并删除。`)) return;
+    setDeletingId(vehicle.id);
+    setDeleteError("");
+    try {
+      const response = await fetch("/api/v1/vehicles", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: vehicle.id }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || "删除失败");
+      onDeleted?.(vehicle.id);
+    } catch (reason) {
+      setDeleteError(reason instanceof Error ? reason.message : "删除失败，请稍后重试");
+    } finally {
+      setDeletingId("");
+    }
+  }
+
   return <>
+    {deleteError && <p className="form-error table-error" role="alert">{deleteError}</p>}
     <div className="column-toolbar">
       <label><ArrowUpDown />排序<select value={sort} onChange={event => setSort(event.target.value)}>{columns.map(column => <option value={column.id} key={column.id}>{column.label}</option>)}</select></label>
       <button type="button" onClick={() => setDirection(current => current === "asc" ? "desc" : "asc")}>{direction === "asc" ? <ArrowUp /> : <ArrowDown />}{direction === "asc" ? "升序" : "降序"}</button>
@@ -122,6 +146,6 @@ export default function VehicleTable({ rows, storageKey = "cargo.vehicle-table" 
         return <div key={id}><label><input type="checkbox" checked={checked} onChange={event => setVisible(current => event.target.checked ? [...current, id] : current.length > 1 ? current.filter(item => item !== id) : current)} />{column.label}</label><span><button type="button" onClick={() => move(id, -1)} disabled={index === 0} aria-label={`上移${column.label}`}><ArrowUp /></button><button type="button" onClick={() => move(id, 1)} disabled={index === order.length - 1} aria-label={`下移${column.label}`}><ArrowDown /></button></span></div>;
       })}<button type="button" className="reset-columns" onClick={reset}>恢复默认</button></div></details>
     </div>
-    <div className="table-wrap"><table><thead><tr>{visibleColumns.map(column => <th key={column.id}>{column.label}</th>)}<th></th></tr></thead><tbody>{sorted.map(vehicle => <tr key={vehicle.id}>{visibleColumns.map(column => <td key={column.id}>{column.render ? column.render(vehicle) : column.value(vehicle) ?? "—"}</td>)}<td><Link href={`/vehicles/${vehicle.id}`}>查看 →</Link></td></tr>)}</tbody></table>{!sorted.length && <div className="empty">暂无符合条件的车辆</div>}</div>
+    <div className="table-wrap"><table><thead><tr>{visibleColumns.map(column => <th key={column.id}>{column.label}</th>)}<th></th></tr></thead><tbody>{sorted.map(vehicle => <tr key={vehicle.id}>{visibleColumns.map(column => <td key={column.id}>{column.render ? column.render(vehicle) : column.value(vehicle) ?? "—"}</td>)}<td><div className="vehicle-row-actions"><Link href={`/vehicles/${vehicle.id}`}>查看 →</Link>{canDelete && <button type="button" className="vehicle-delete" disabled={deletingId === vehicle.id} onClick={() => remove(vehicle)} title="删除车辆"><Trash2 />{deletingId === vehicle.id ? "删除中" : "删除"}</button>}</div></td></tr>)}</tbody></table>{!sorted.length && <div className="empty">暂无符合条件的车辆</div>}</div>
   </>;
 }

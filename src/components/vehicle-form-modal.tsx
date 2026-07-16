@@ -28,10 +28,10 @@ export default function VehicleFormModal({ defaultType = "overseas", initial, on
     };
     const payload: VehicleFormValues = {
       type,
-      vin: text("vin") || "",
-      model: text("model") || "",
+      vin: text("vin"),
+      model: text("model"),
       brand: text("brand"),
-      referenceNo: text("referenceNo") || "",
+      referenceNo: text("referenceNo"),
       hsCode: text("hsCode"),
       portOfLoad: text("portOfLoad"),
       portOfDischarge: text("portOfDischarge"),
@@ -39,10 +39,10 @@ export default function VehicleFormModal({ defaultType = "overseas", initial, on
       etd: date("etd"),
       eta: date("eta"),
       manufacturer: text("manufacturer"),
-      warehouseLocation: text("warehouseLocation") || "",
-      warehouse: text("warehouse") || "",
+      warehouseLocation: text("warehouseLocation"),
+      warehouse: text("warehouse"),
       warehouseTimezone: CHINA_TIME_ZONE,
-      customer: text("customer") || "",
+      customer: text("customer"),
       inboundAt: date("inboundAt"),
       inboundAmount: text("inboundAmount"),
       inboundBoeNo: text("inboundBoeNo"),
@@ -97,6 +97,7 @@ export default function VehicleFormModal({ defaultType = "overseas", initial, on
         <button type="button" onClick={onClose} aria-label="关闭"><X /></button>
       </div>
       <form action={submit}>
+        {!initial && <p className="data-warning">所有业务字段均可暂不填写；保存后可在车辆详情中继续补充。</p>}
         {initial && <fieldset className={`form-section status-editor${status === "异常" ? " status-editor-alert" : ""}`}>
           <legend>当前车辆状态</legend>
           <div className="form-grid">
@@ -109,11 +110,11 @@ export default function VehicleFormModal({ defaultType = "overseas", initial, on
           <legend>车辆与批次</legend>
           <div className="form-grid">
             <label>业务类型<select name="type" value={type} onChange={event => setType(event.target.value as BusinessType)}><option value="overseas">海外保税仓</option><option value="domestic">国内仓储</option></select></label>
-            <label>车架号<input name="vin" maxLength={100} required defaultValue={value("vin")} placeholder="输入车架号（不限 17 位）" /></label>
-            <label>车型<input name="model" required defaultValue={value("model")} /></label>
+            <label>车架号<input name="vin" maxLength={100} defaultValue={value("vin")} placeholder="可稍后补充（不限 17 位）" /></label>
+            <label>车型<input name="model" defaultValue={value("model")} /></label>
             {type === "domestic" && <label>品牌<input name="brand" defaultValue={value("brand")} /></label>}
             {type === "domestic" && <label>生产商<input name="manufacturer" defaultValue={value("manufacturer")} /></label>}
-            <label>{type === "overseas" ? "提单号" : "PO#"}<input name="referenceNo" required defaultValue={value("referenceNo")} /></label>
+            <label>{type === "overseas" ? "提单号" : "PO#"}<input name="referenceNo" defaultValue={value("referenceNo")} /></label>
             {type === "overseas" && <label>HS#<input name="hsCode" defaultValue={value("hsCode")} /></label>}
             {type === "overseas" && <label>起运港<input name="portOfLoad" defaultValue={value("portOfLoad")} /></label>}
             {type === "overseas" && <label>目的港<input name="portOfDischarge" defaultValue={value("portOfDischarge")} /></label>}
@@ -126,9 +127,9 @@ export default function VehicleFormModal({ defaultType = "overseas", initial, on
         <fieldset className="form-section">
           <legend>仓库与客户</legend>
           <div className="form-grid">
-            <label>{type === "overseas" ? "保税仓地点" : "仓库地点"}<input name="warehouseLocation" required defaultValue={value("warehouseLocation")} /></label>
-            <label>入库仓库名称<input name="warehouse" required defaultValue={value("warehouse")} /></label>
-            <label>所属客人<input name="customer" required defaultValue={value("customer")} /></label>
+            <label>{type === "overseas" ? "保税仓地点" : "仓库地点"}<input name="warehouseLocation" defaultValue={value("warehouseLocation")} /></label>
+            <label>入库仓库名称<input name="warehouse" defaultValue={value("warehouse")} /></label>
+            <label>所属客人<input name="customer" defaultValue={value("customer")} /></label>
             <label>系统时区<input value="中国标准时间（Asia/Shanghai）" disabled readOnly /></label>
             <label>{type === "overseas" ? "入保税仓库时间" : "入仓库时间"}<input type="datetime-local" name="inboundAt" defaultValue={dateValue("inboundAt")} /></label>
             <label>入库金额<input type="number" name="inboundAmount" min="0" step="0.01" defaultValue={value("inboundAmount")} /></label>

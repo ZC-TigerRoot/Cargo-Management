@@ -112,8 +112,8 @@ model BusinessBatch {
 
 model Vehicle {
   id               String           @id @default(cuid())
-  vin              String           @unique
-  model            String
+  vin              String?          @unique
+  model            String?
   brand            String?
   hsCode           String?
   status           VehicleStatus    @default(PENDING_INBOUND)

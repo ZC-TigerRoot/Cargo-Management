@@ -9,11 +9,11 @@ export type VehicleStatus = typeof vehicleStatuses[number];
 export type VehicleRecord = {
   id: string;
   version: number;
-  vin: string;
-  model: string;
+  vin?: string;
+  model?: string;
   brand?: string;
   type: BusinessType;
-  referenceNo: string;
+  referenceNo?: string;
   hsCode?: string;
   portOfLoad?: string;
   portOfDischarge?: string;
@@ -21,10 +21,10 @@ export type VehicleRecord = {
   etd?: string;
   eta?: string;
   manufacturer?: string;
-  warehouseLocation: string;
-  warehouse: string;
+  warehouseLocation?: string;
+  warehouse?: string;
   warehouseTimezone: string;
-  customer: string;
+  customer?: string;
   status: VehicleStatus;
   inboundAt?: string;
   inboundAmount?: string;
@@ -55,6 +55,7 @@ export type VehicleEventRecord = {
   actor?: string;
   correctionOfId?: string;
   reason?: string;
+  details?: { label: string; value: string }[];
   attachments?: VehicleAttachmentRecord[];
 };
 
@@ -81,7 +82,7 @@ export type VehicleAuditRecord = {
   changes: VehicleAuditChange[];
 };
 
-export type VehicleFormValues = Omit<VehicleRecord, "id" | "version" | "status" | "updatedAt" | "history">;
+export type VehicleFormValues = Omit<VehicleRecord, "id" | "version" | "status" | "updatedAt" | "history" | "auditTrail">;
 
 export const transitions: Record<string, VehicleStatus> = {
   INBOUND: "在库", MERCHANT_RELEASE: "待放车", CUSTOMER_RELEASE: "待提货",
@@ -94,14 +95,14 @@ export function inventoryDays(inboundAt?: string, outboundAt?: string, now = new
   return Math.max(0, Math.ceil((end.getTime() - new Date(inboundAt).getTime()) / 86_400_000));
 }
 
-export type Permission = "view" | "create" | "correct" | "export" | "coordinatePickups" | "manageUsers" | "manageSettings";
+export type Permission = "view" | "create" | "correct" | "delete" | "export" | "coordinatePickups" | "manageUsers" | "manageSettings";
 
 export const can = (role: Role, action: Permission) => {
   const grants: Record<Role, string[]> = {
     warehouse: ["view", "create", "correct", "coordinatePickups"],
     forwarder: ["view", "create", "correct", "export", "coordinatePickups", "manageSettings"],
     customer: ["view"],
-    admin: ["view", "create", "correct", "export", "coordinatePickups", "manageUsers", "manageSettings"],
+    admin: ["view", "create", "correct", "delete", "export", "coordinatePickups", "manageUsers", "manageSettings"],
   };
   return grants[role].includes(action);
 };

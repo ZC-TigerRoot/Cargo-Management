@@ -40,5 +40,10 @@ export function useVehicleRecords() {
     setLoadError("");
   }
 
-  return { records, saveRecord, loading, loadError };
+  function removeRecord(id: string) {
+    setRecords(current => current.filter(record => record.id !== id));
+    setLoadError("");
+  }
+
+  return { records, saveRecord, removeRecord, loading, loadError };
 }

@@ -17,6 +17,12 @@ describe("库存领域规则", () => {
     expect(can("warehouse", "manageUsers")).toBe(false);
     expect(can("customer", "manageUsers")).toBe(false);
   });
+  it("只有管理员可以删除车辆", () => {
+    expect(can("admin", "delete")).toBe(true);
+    expect(can("forwarder", "delete")).toBe(false);
+    expect(can("warehouse", "delete")).toBe(false);
+    expect(can("customer", "delete")).toBe(false);
+  });
   it("事件推导状态", () => expect(transitions.DRIVER_SIGNED).toBe("已完成"));
 });
 
@@ -24,6 +30,8 @@ describe("司机提车凭证校验", () => {
   const base = {
     pickupAt: "2026-07-15T08:00:00.000Z",
     idempotencyKey: "driver-submit-001",
+    driverLabel: "沪运车队",
+    driverName: "张师傅",
   };
 
   it("只校验签收元数据，不接收 Base64 图片内容", () => {
@@ -34,6 +42,11 @@ describe("司机提车凭证校验", () => {
 
   it("拒绝无效签收时间", () => {
     expect(driverSubmission.safeParse({ ...base, pickupAt: "invalid" }).success).toBe(false);
+  });
+
+  it("司机名称和姓名均为必填", () => {
+    expect(driverSubmission.safeParse({ ...base, driverLabel: "" }).success).toBe(false);
+    expect(driverSubmission.safeParse({ ...base, driverName: "" }).success).toBe(false);
   });
 });
 
@@ -119,6 +132,15 @@ describe("车辆录入校验", () => {
       outboundBoeNo: "BOE-OUT-001",
       outboundBoeTitle: "测试客户",
       outboundAmount: "1350.00",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("允许手工创建仅包含业务类型的空白车辆记录", () => {
+    const result = vehicleInput.safeParse({
+      type: "domestic",
+      warehouseTimezone: "Asia/Shanghai",
+      idempotencyKey: "manual-empty-001",
     });
     expect(result.success).toBe(true);
   });

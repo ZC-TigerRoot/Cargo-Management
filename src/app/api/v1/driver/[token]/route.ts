@@ -18,6 +18,14 @@ function jsonObject(value: Prisma.JsonValue | null) {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, Prisma.JsonValue> : {};
 }
 
+function submittedDriver(value: Prisma.JsonValue | null) {
+  const submission = jsonObject(value);
+  return {
+    driverLabel: typeof submission.driverLabel === "string" ? submission.driverLabel : undefined,
+    driverName: typeof submission.driverName === "string" ? submission.driverName : undefined,
+  };
+}
+
 async function findTask(token: string) {
   return prisma.pickupTask.findUnique({
     where: { token },
@@ -43,7 +51,8 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ token:
       status: task!.submittedAt ? "submitted" : "pending",
       submittedAt: task!.submittedAt?.toISOString(),
       receiptNo: task!.submittedAt ? receiptNo(task!.taskNo) : undefined,
-      vehicles: task!.items.map(item => ({ vin: item.vehicle.vin, model: item.vehicle.model })),
+      ...submittedDriver(task!.driverSubmission),
+      vehicles: task!.items.map(item => ({ id: item.vehicle.id, vin: item.vehicle.vin ?? undefined, model: item.vehicle.model ?? undefined })),
     } });
   } catch (error) {
     console.error(error);
@@ -78,6 +87,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
     const parsed = driverSubmission.safeParse({
       pickupAt: form.get("pickupAt"),
       idempotencyKey: form.get("idempotencyKey"),
+      driverLabel: form.get("driverLabel"),
+      driverName: form.get("driverName"),
     });
     if (!parsed.success) return NextResponse.json({ error: "VALIDATION_ERROR", issues: parsed.error.flatten() }, { status: 422 });
     const photo = form.get("photo");
@@ -91,7 +102,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
     if (task!.submittedAt) {
       const previous = jsonObject(task!.driverSubmission);
       if (previous.idempotencyKey === parsed.data.idempotencyKey) {
-        return NextResponse.json({ data: { status: "submitted", receiptNo: receiptNo(task!.taskNo), submittedAt: task!.submittedAt.toISOString() } });
+        return NextResponse.json({ data: { status: "submitted", receiptNo: receiptNo(task!.taskNo), submittedAt: task!.submittedAt.toISOString(), ...submittedDriver(task!.driverSubmission) } });
       }
       return NextResponse.json({ error: "ALREADY_SUBMITTED", message: "该提货任务已经签收" }, { status: 409 });
     }
@@ -99,6 +110,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
     const now = new Date();
     storedUpload = await storeDriverPhoto(photo, now);
     const submission = { ...parsed.data, photoPath: storedUpload.objectKey } satisfies Prisma.InputJsonObject;
+    const driverActor = `司机：${parsed.data.driverName}`;
     const submitted = await prisma.$transaction(async tx => {
       const claimed = await tx.pickupTask.updateMany({
         where: { id: task!.id, submittedAt: null, revokedAt: null, expiresAt: { gt: now } },
@@ -116,8 +128,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
             payload: {
               taskNo: task!.taskNo,
               photoUploaded: true,
-              actorLabel: "司机（提货链接）",
-              reason: `提货任务 ${task!.taskNo} 已完成，司机上传了现场照片。`,
+              driverLabel: parsed.data.driverLabel,
+              driverName: parsed.data.driverName,
+              actorLabel: driverActor,
+              reason: `提货任务 ${task!.taskNo} 已完成，司机已填写信息并上传现场照片。`,
             },
           },
         });
@@ -133,24 +147,24 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
         });
         await tx.auditLog.create({
           data: {
-            actorLabel: "司机（提货链接）",
+            actorLabel: driverActor,
             action: "PICKUP_SIGNED",
             entityType: "Vehicle",
             entityId: item.vehicle.id,
             before: { status: statusLabels[item.vehicle.status], version: item.vehicle.version },
-            after: { status: "已完成", version: item.vehicle.version + 1, taskNo: task!.taskNo },
+            after: { status: "已完成", version: item.vehicle.version + 1, taskNo: task!.taskNo, driverLabel: parsed.data.driverLabel, driverName: parsed.data.driverName },
             ip: requestIp(req),
           },
         });
       }
       await tx.auditLog.create({
         data: {
-          actorLabel: "司机（提货链接）",
+          actorLabel: driverActor,
           action: "PICKUP_SIGNED",
           entityType: "PickupTask",
           entityId: task!.id,
           before: { taskNo: task!.taskNo, submittedAt: null, status: "pending" },
-          after: { taskNo: task!.taskNo, submittedAt: now.toISOString(), status: "submitted", photoUploaded: true, vehicleIds: task!.items.map(item => item.vehicle.id) },
+          after: { taskNo: task!.taskNo, submittedAt: now.toISOString(), status: "submitted", photoUploaded: true, driverLabel: parsed.data.driverLabel, driverName: parsed.data.driverName, vehicleIds: task!.items.map(item => item.vehicle.id) },
           ip: requestIp(req),
         },
       });
@@ -160,12 +174,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
       const latest = await findTask(token);
       const previous = jsonObject(latest?.driverSubmission ?? null);
       if (latest?.submittedAt && previous.idempotencyKey === parsed.data.idempotencyKey) {
-        return NextResponse.json({ data: { status: "submitted", receiptNo: receiptNo(latest.taskNo), submittedAt: latest.submittedAt.toISOString() } });
+        return NextResponse.json({ data: { status: "submitted", receiptNo: receiptNo(latest.taskNo), submittedAt: latest.submittedAt.toISOString(), ...submittedDriver(latest.driverSubmission) } });
       }
       return NextResponse.json({ error: "SUBMISSION_CONFLICT", message: "任务状态已变化，请刷新后重试" }, { status: 409 });
     }
     uploadCommitted = true;
-    return NextResponse.json({ data: { status: "submitted", receiptNo: receiptNo(task!.taskNo), submittedAt: now.toISOString() } }, { status: 201 });
+    return NextResponse.json({ data: { status: "submitted", receiptNo: receiptNo(task!.taskNo), submittedAt: now.toISOString(), driverLabel: parsed.data.driverLabel, driverName: parsed.data.driverName } }, { status: 201 });
   } catch (error) {
     if (error instanceof Error && error.message === "IMAGE_TOO_LARGE") {
       return NextResponse.json({ error: "PAYLOAD_TOO_LARGE", message: "车辆照片不能超过 5 MB" }, { status: 413 });

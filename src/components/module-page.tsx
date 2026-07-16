@@ -30,9 +30,9 @@ export default function ModulePage({ kind }: { kind: Kind }) {
   const { user } = useSession();
   const m = meta[kind];
   const type: BusinessType | undefined = kind === "overseas" ? "overseas" : kind === "domestic" ? "domestic" : undefined;
-  const { records, saveRecord, loadError } = useVehicleRecords();
+  const { records, saveRecord, removeRecord, loadError } = useVehicleRecords();
   const rows = useMemo(() => records.filter(vehicle =>
-    (!type || vehicle.type === type) && `${vehicle.vin}${vehicle.model}${vehicle.referenceNo}${vehicle.customer}${vehicle.warehouse}${vehicle.inboundBoeNo ?? ""}${vehicle.outboundBoeNo ?? ""}${vehicle.outboundBoeTitle ?? ""}`.toLowerCase().includes(q.toLowerCase()),
+    (!type || vehicle.type === type) && [vehicle.vin, vehicle.model, vehicle.referenceNo, vehicle.customer, vehicle.warehouse, vehicle.inboundBoeNo, vehicle.outboundBoeNo, vehicle.outboundBoeTitle].filter(Boolean).join("").toLowerCase().includes(q.toLowerCase()),
   ), [records, q, type]);
   const recordModule = ["vehicles", "overseas", "domestic"].includes(kind);
   const role = user?.role ?? "customer";
@@ -51,7 +51,7 @@ export default function ModulePage({ kind }: { kind: Kind }) {
       <section className="content">
         <div className="module-heading"><div><p className="eyebrow">{m.eyebrow}</p><h2>{m.title}</h2><p>{m.description}</p></div></div>
         {recordModule && loadError && <p className="form-error">{loadError}</p>}
-        {recordModule && <VehicleModule rows={rows} q={q} setQ={setQ} />}
+        {recordModule && <VehicleModule rows={rows} q={q} setQ={setQ} canDelete={can(role, "delete")} onDeleted={removeRecord} />}
         {kind === "pickups" && <PickupModule records={records} canCreate={can(role, "create")} />}
         {kind === "imports" && <ImportModule />}
         {kind === "reports" && <ReportModule records={records} />}
@@ -62,17 +62,17 @@ export default function ModulePage({ kind }: { kind: Kind }) {
   </div>;
 }
 
-function VehicleModule({ rows, q, setQ }: { rows: VehicleRecord[]; q: string; setQ: (value: string) => void }) {
+function VehicleModule({ rows, q, setQ, canDelete, onDeleted }: { rows: VehicleRecord[]; q: string; setQ: (value: string) => void; canDelete: boolean; onDeleted: (id: string) => void }) {
   return <article className="panel table-panel module-panel">
     <div className="filters"><label className="search"><Search /><input value={q} onChange={event => setQ(event.target.value)} placeholder="搜索车架号、车型、提单 / PO、客户…" /></label><span className="result-count">共 {rows.length} 辆</span></div>
-    <VehicleTable rows={rows} storageKey="cargo.module-vehicle-table" />
+    <VehicleTable rows={rows} storageKey="cargo.module-vehicle-table" canDelete={canDelete} onDeleted={onDeleted} />
   </article>;
 }
 
 type PickupTask = {
   id: string; taskNo: string; expiresAt: string; createdAt: string; status: "pending" | "submitted" | "expired" | "revoked";
   tokenPath: string; pickupUrl: string;
-  vehicles: { id: string; vin: string; model: string }[];
+  vehicles: { id: string; vin?: string; model?: string }[];
 };
 
 type PickupQr = { taskNo: string; url: string; qr: string };
@@ -133,12 +133,12 @@ function PickupModule({ records, canCreate }: { records: VehicleRecord[]; canCre
 
   const statusName = { pending: "进行中", submitted: "已签收", expired: "已过期", revoked: "已撤销" };
   return <div className="pickup-layout">
-    <article className="panel pickup-create"><h3>{canCreate ? "创建提货二维码" : "查看提货二维码"}</h3>{canCreate && <form onSubmit={createTask}><div className="pickup-vehicles">{eligible.map(vehicle => <label key={vehicle.id}><input type="checkbox" checked={selected.includes(vehicle.id)} onChange={event => setSelected(current => event.target.checked ? [...current, vehicle.id] : current.filter(id => id !== vehicle.id))}/><span><b>{vehicle.model}</b><small>{vehicle.vin} · {vehicle.warehouse}</small></span></label>)}{!eligible.length && <p className="muted">暂无可创建提货任务的车辆</p>}</div><label className="expiry-field">二维码有效期<input type="datetime-local" value={expiresAt} onChange={event => setExpiresAt(event.target.value)} required/></label><button className="primary-button" disabled={loading || !selected.length}>{loading ? "创建中…" : "生成提货二维码"}</button></form>}{pickupQr ? <div className="qr-result"><b>{pickupQr.taskNo}</b><Image src={pickupQr.qr} width={180} height={180} unoptimized alt="司机提货二维码"/><div className="qr-actions"><a href={pickupQr.url} target="_blank" rel="noreferrer">打开签收页</a><a href={pickupQr.qr} download={`${pickupQr.taskNo}-二维码.png`}>下载二维码</a></div><p>{pickupQr.url}</p><small>此二维码可随时从右侧任务中重新查看。</small></div> : !canCreate && <p className="muted">请从右侧任务中选择“查看二维码”。</p>}{error && <p className="form-error">{error}</p>}</article>
-    <div className="module-cards pickup-cards">{tasks.map(task => <article className="panel action-card" key={task.id}><span>{statusName[task.status]}</span><h3>{task.taskNo}</h3><p>{task.vehicles.map(vehicle => vehicle.model).join("、")}</p><small>{task.vehicles.map(vehicle => `···${vehicle.vin.slice(-6)}`).join(" · ")}<br/>有效至 {chinaDateTime(task.expiresAt)}</small><button type="button" className="task-qr-button" onClick={() => showTaskQr(task)}>查看二维码</button></article>)}{!tasks.length && !error && <p className="muted">暂无提货任务</p>}</div>
+    <article className="panel pickup-create"><h3>{canCreate ? "创建提货二维码" : "查看提货二维码"}</h3>{canCreate && <form onSubmit={createTask}><div className="pickup-vehicles">{eligible.map(vehicle => <label key={vehicle.id}><input type="checkbox" checked={selected.includes(vehicle.id)} onChange={event => setSelected(current => event.target.checked ? [...current, vehicle.id] : current.filter(id => id !== vehicle.id))}/><span><b>{vehicle.model || "未填写车型"}</b><small>{vehicle.vin || "未填写车架号"} · {vehicle.warehouse || "未填写仓库"}</small></span></label>)}{!eligible.length && <p className="muted">暂无可创建提货任务的车辆</p>}</div><label className="expiry-field">二维码有效期<input type="datetime-local" value={expiresAt} onChange={event => setExpiresAt(event.target.value)} required/></label><button className="primary-button" disabled={loading || !selected.length}>{loading ? "创建中…" : "生成提货二维码"}</button></form>}{pickupQr ? <div className="qr-result"><b>{pickupQr.taskNo}</b><Image src={pickupQr.qr} width={180} height={180} unoptimized alt="司机提货二维码"/><div className="qr-actions"><a href={pickupQr.url} target="_blank" rel="noreferrer">打开签收页</a><a href={pickupQr.qr} download={`${pickupQr.taskNo}-二维码.png`}>下载二维码</a></div><p>{pickupQr.url}</p><small>此二维码可随时从右侧任务中重新查看。</small></div> : !canCreate && <p className="muted">请从右侧任务中选择“查看二维码”。</p>}{error && <p className="form-error">{error}</p>}</article>
+    <div className="module-cards pickup-cards">{tasks.map(task => <article className="panel action-card" key={task.id}><span>{statusName[task.status]}</span><h3>{task.taskNo}</h3><p>{task.vehicles.map(vehicle => vehicle.model || "未填写车型").join("、")}</p><small>{task.vehicles.map(vehicle => vehicle.vin ? `···${vehicle.vin.slice(-6)}` : "未填写车架号").join(" · ")}<br/>有效至 {chinaDateTime(task.expiresAt)}</small><button type="button" className="task-qr-button" onClick={() => showTaskQr(task)}>查看二维码</button></article>)}{!tasks.length && !error && <p className="muted">暂无提货任务</p>}</div>
   </div>;
 }
 
-type PreviewResult = { fileName: string; businessType: string; totalRows: number; validRows: number; invalidRows: number; missingHeaders: string[]; errors: { row: number; vin?: unknown; errors: string[] }[] };
+type PreviewResult = { fileName: string; businessType: string; totalRows: number; validRows: number; invalidRows: number; missingHeaders: string[]; ignoredColumns: string[]; importedRows?: number; failedRows?: number; errors: { row: number; vin?: unknown; errors: string[] }[] };
 
 function ImportModule() {
   const [file, setFile] = useState<File>();
@@ -158,7 +158,19 @@ function ImportModule() {
     } catch (reason) { setError(reason instanceof Error ? reason.message : "预校验失败"); }
     finally { setLoading(false); }
   }
-  return <article className="panel import-box"><UploadCloud/><h3>上传 Excel 进行预校验</h3><p>自动识别海外仓或国内仓，缺少的标准列和单元格按空值处理，文件最大 10 MB</p><form onSubmit={preview}><label className="secondary-button">选择文件<input type="file" accept=".xlsx,.xls" onChange={event => setFile(event.target.files?.[0])}/></label>{file && <button className="primary-button" disabled={loading}>{loading ? "校验中…" : "提交预校验"}</button>}</form>{file && <div className="file-selected"><FileSpreadsheet/>已选择 {file.name}</div>}{error && <p className="form-error">{error}</p>}{result && <div className="import-result"><h4>{result.businessType}：{result.validRows} / {result.totalRows} 行可导入</h4>{result.missingHeaders.length > 0 && <p>以下缺失列已按空值处理：{result.missingHeaders.join("、")}</p>}{result.errors.slice(0, 10).map(item => <p key={item.row}>第 {item.row} 行（{String(item.vin || "无车架号")}）：{item.errors.join("；")}</p>)}</div>}</article>;
+  async function importRows() {
+    if (!file || !result?.validRows) return;
+    setLoading(true); setError("");
+    const body = new FormData(); body.set("file", file);
+    try {
+      const response = await fetch("/api/v1/import", { method: "POST", body });
+      const json = await response.json();
+      if (!response.ok) throw new Error(json.message || "导入失败");
+      setResult(json.data);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "导入失败"); }
+    finally { setLoading(false); }
+  }
+  return <article className="panel import-box"><UploadCloud/><h3>上传 Excel 进行预校验</h3><p>自动识别海外仓或国内仓，缺少的标准列和单元格按空值处理，文件最大 10 MB</p><form onSubmit={preview}><label className="secondary-button">选择文件<input type="file" accept=".xlsx,.xls" onChange={event => { setFile(event.target.files?.[0]); setResult(undefined); setError(""); }}/></label>{file && <button className="primary-button" disabled={loading}>{loading ? "处理中…" : "提交预校验"}</button>}</form>{file && <div className="file-selected"><FileSpreadsheet/>已选择 {file.name}</div>}{error && <p className="form-error">{error}</p>}{result && <div className="import-result"><h4>{result.businessType}：{result.validRows} / {result.totalRows} 行可导入</h4>{result.importedRows !== undefined && <p className="import-success">已成功导入 {result.importedRows} 行；{result.failedRows || 0} 行未导入。</p>}{result.missingHeaders.length > 0 && <p>以下缺失列已按空值处理：{result.missingHeaders.join("、")}</p>}{result.ignoredColumns.length > 0 && <p>以下内容不会导入：{result.ignoredColumns.join("、")}。</p>}{result.errors.length > 0 && <div className="import-errors"><b>无法导入的行与原因</b>{result.errors.map(item => <p key={`${item.row}-${String(item.vin)}`}>第 {item.row} 行（{String(item.vin || "无车架号")}）：{item.errors.join("；")}</p>)}</div>}{result.importedRows === undefined && <button type="button" className="primary-button import-button" disabled={loading || result.validRows === 0} onClick={importRows}>{loading ? "导入中…" : `导入 ${result.validRows} 行有效数据`}</button>}</div>}</article>;
 }
 
 function ReportModule({ records }: { records: VehicleRecord[] }) {

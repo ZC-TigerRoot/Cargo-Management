@@ -61,8 +61,12 @@ export async function requireVehicleInScope(user: AccessUser, vehicleId: string)
   if (!vehicle) throw new AuthorizationError(403, "当前账号不能访问或修改该车辆");
 }
 
-export async function requirePayloadWarehouseInScope(user: AccessUser, warehouseName: string, warehouseLocation: string) {
+export async function requirePayloadWarehouseInScope(user: AccessUser, warehouseName?: string, warehouseLocation?: string) {
   if (user.roleName !== "warehouse") return;
+  if (!warehouseName && !warehouseLocation) return;
+  if (!warehouseName || !warehouseLocation) {
+    throw new AuthorizationError(403, "仓管填写仓库时必须同时提供仓库名称和地点");
+  }
   const warehouse = await prisma.warehouse.findUnique({
     where: { name_location: { name: warehouseName, location: warehouseLocation } },
     select: { id: true },

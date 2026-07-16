@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
+import { z } from "zod";
 import { vehicleInput, vehicleUpdateInput } from "@/lib/validators";
-import { createVehicle, listVehicleAuditTrail, listVehicles, toVehicleRecord, updateVehicle, VersionConflictError } from "@/lib/vehicle-repository";
+import { createVehicle, deleteVehicle, listVehicleAuditTrail, listVehicles, toVehicleRecord, updateVehicle, VersionConflictError } from "@/lib/vehicle-repository";
 import { assertSameOrigin, AuthorizationError, requestIp, requirePayloadWarehouseInScope, requireUser, requireVehicleInScope, vehicleScopeWhere } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
+import { removeLocalUpload } from "@/lib/local-upload";
 
 function apiError(error: unknown) {
   if (error instanceof AuthorizationError) {
@@ -66,6 +69,27 @@ export async function PATCH(req: NextRequest) {
     await requirePayloadWarehouseInScope(user, data.warehouse, data.warehouseLocation);
     const vehicle = await updateVehicle(id, version, data, { actorId: user.id, ip: requestIp(req) });
     return NextResponse.json({ data: toVehicleRecord(vehicle), audit: { action: "VEHICLE_UPDATED", actor: user.name } });
+  } catch (error) {
+    return apiError(error);
+  }
+}
+
+export async function DELETE(req: NextRequest) {
+  try {
+    const user = await requireUser("delete");
+    assertSameOrigin(req);
+    const parsed = z.object({ id: z.string().min(1) }).safeParse(await req.json());
+    if (!parsed.success) return NextResponse.json({ error: "VALIDATION_ERROR", issues: parsed.error.flatten() }, { status: 422 });
+    const deleted = await deleteVehicle(parsed.data.id, { actorId: user.id, ip: requestIp(req) });
+    for (const objectKey of deleted.objectKeys) {
+      if (await prisma.attachment.count({ where: { objectKey } })) continue;
+      try {
+        await removeLocalUpload(objectKey);
+      } catch (error) {
+        console.error("Failed to clean up deleted vehicle attachment", error);
+      }
+    }
+    return NextResponse.json({ data: { id: deleted.record.id }, audit: { action: "VEHICLE_DELETED", actor: user.name } });
   } catch (error) {
     return apiError(error);
   }

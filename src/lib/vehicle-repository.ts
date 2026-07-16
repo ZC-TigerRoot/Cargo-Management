@@ -83,6 +83,11 @@ function jsonObject(value: Prisma.JsonValue | undefined) {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, Prisma.JsonValue> : {};
 }
 
+function extraText(value: Prisma.JsonValue | undefined, key: string) {
+  const candidate = jsonObject(value)[key];
+  return typeof candidate === "string" && candidate ? candidate : undefined;
+}
+
 function eventPayload(event: VehicleWithRelations["events"][number]) {
   return jsonObject(event.payload);
 }
@@ -116,6 +121,10 @@ function eventHistory(vehicle: VehicleWithRelations): VehicleEventRecord[] {
       actor: event.actor?.name ?? (typeof payload.actorLabel === "string" ? payload.actorLabel : undefined),
       correctionOfId: event.correctionOfId ?? undefined,
       reason: typeof payload.reason === "string" ? payload.reason : cleared ? "清空错误的业务时间" : undefined,
+      details: [
+        typeof payload.driverLabel === "string" ? { label: "司机名称", value: payload.driverLabel } : undefined,
+        typeof payload.driverName === "string" ? { label: "姓名", value: payload.driverName } : undefined,
+      ].filter((item): item is { label: string; value: string } => Boolean(item)),
       attachments: event.attachments.map(attachment => ({
         ...attachment,
         url: `/api/v1/attachments/${encodeURIComponent(attachment.id)}`,
@@ -125,26 +134,26 @@ function eventHistory(vehicle: VehicleWithRelations): VehicleEventRecord[] {
 }
 
 export function toVehicleRecord(vehicle: VehicleWithRelations): VehicleRecord {
-  const type = vehicle.batch?.type === "DOMESTIC" ? "domestic" : "overseas";
+  const type = vehicle.batch?.type === "DOMESTIC" || extraText(vehicle.extra, "businessType") === "domestic" ? "domestic" : "overseas";
   return {
     id: vehicle.id,
     version: vehicle.version,
-    vin: vehicle.vin,
-    model: vehicle.model,
+    vin: vehicle.vin ?? undefined,
+    model: vehicle.model ?? undefined,
     brand: vehicle.brand ?? undefined,
     type,
-    referenceNo: vehicle.batch?.referenceNo ?? "",
+    referenceNo: vehicle.batch?.referenceNo ?? extraText(vehicle.extra, "referenceNo"),
     hsCode: vehicle.hsCode ?? undefined,
-    portOfLoad: vehicle.batch?.portOfLoad ?? undefined,
-    portOfDischarge: vehicle.batch?.portOfDischarge ?? undefined,
-    vesselVoyage: vehicle.batch?.vesselVoyage ?? undefined,
-    etd: vehicle.batch?.etd?.toISOString(),
-    eta: vehicle.batch?.eta?.toISOString(),
-    manufacturer: vehicle.batch?.manufacturer ?? undefined,
-    warehouseLocation: vehicle.warehouse?.location ?? "",
-    warehouse: vehicle.warehouse?.name ?? "",
+    portOfLoad: vehicle.batch?.portOfLoad ?? extraText(vehicle.extra, "portOfLoad"),
+    portOfDischarge: vehicle.batch?.portOfDischarge ?? extraText(vehicle.extra, "portOfDischarge"),
+    vesselVoyage: vehicle.batch?.vesselVoyage ?? extraText(vehicle.extra, "vesselVoyage"),
+    etd: vehicle.batch?.etd?.toISOString() ?? extraText(vehicle.extra, "etd"),
+    eta: vehicle.batch?.eta?.toISOString() ?? extraText(vehicle.extra, "eta"),
+    manufacturer: vehicle.batch?.manufacturer ?? extraText(vehicle.extra, "manufacturer"),
+    warehouseLocation: vehicle.warehouse?.location ?? extraText(vehicle.extra, "warehouseLocation"),
+    warehouse: vehicle.warehouse?.name ?? extraText(vehicle.extra, "warehouse"),
     warehouseTimezone: CHINA_TIME_ZONE,
-    customer: vehicle.customer?.name ?? "",
+    customer: vehicle.customer?.name ?? undefined,
     status: statusNames[vehicle.status] ?? "待入库",
     inboundAt: vehicle.inboundAt?.toISOString(),
     inboundAmount: vehicle.inboundAmount?.toFixed(2),
@@ -178,12 +187,14 @@ function prismaStatus(data: VehiclePayload): PrismaVehicleStatus {
 async function upsertRelations(tx: Prisma.TransactionClient, data: VehiclePayload, context: MutationContext) {
   const type = data.type === "overseas" ? "OVERSEAS" : "DOMESTIC";
   const [batchBefore, customerBefore, warehouseBefore] = await Promise.all([
-    tx.businessBatch.findUnique({ where: { type_referenceNo: { type, referenceNo: data.referenceNo } } }),
-    tx.customer.findUnique({ where: { name: data.customer } }),
-    tx.warehouse.findUnique({ where: { name_location: { name: data.warehouse, location: data.warehouseLocation } } }),
+    data.referenceNo ? tx.businessBatch.findUnique({ where: { type_referenceNo: { type, referenceNo: data.referenceNo } } }) : null,
+    data.customer ? tx.customer.findUnique({ where: { name: data.customer } }) : null,
+    data.warehouse && data.warehouseLocation
+      ? tx.warehouse.findUnique({ where: { name_location: { name: data.warehouse, location: data.warehouseLocation } } })
+      : null,
   ]);
   const [batch, customer, warehouse] = await Promise.all([
-    tx.businessBatch.upsert({
+    data.referenceNo ? tx.businessBatch.upsert({
       where: { type_referenceNo: { type, referenceNo: data.referenceNo } },
       create: {
         type,
@@ -203,16 +214,16 @@ async function upsertRelations(tx: Prisma.TransactionClient, data: VehiclePayloa
         eta: data.eta ? new Date(data.eta) : null,
         manufacturer: data.manufacturer ?? null,
       },
-    }),
-    tx.customer.upsert({ where: { name: data.customer }, create: { name: data.customer }, update: {} }),
-    tx.warehouse.upsert({
+    }) : null,
+    data.customer ? tx.customer.upsert({ where: { name: data.customer }, create: { name: data.customer }, update: {} }) : null,
+    data.warehouse && data.warehouseLocation ? tx.warehouse.upsert({
       where: { name_location: { name: data.warehouse, location: data.warehouseLocation } },
       create: { name: data.warehouse, location: data.warehouseLocation, bonded: data.type === "overseas" },
       update: { bonded: data.type === "overseas" },
-    }),
+    }) : null,
   ]);
 
-  const batchSnapshot = (value: typeof batch) => ({
+  const batchSnapshot = (value: NonNullable<typeof batch>) => ({
     type: value.type,
     referenceNo: value.referenceNo,
     portOfLoad: value.portOfLoad,
@@ -222,13 +233,14 @@ async function upsertRelations(tx: Prisma.TransactionClient, data: VehiclePayloa
     eta: value.eta?.toISOString() ?? null,
     manufacturer: value.manufacturer,
   });
-  const customerSnapshot = (value: typeof customer) => ({ name: value.name });
-  const warehouseSnapshot = (value: typeof warehouse) => ({ name: value.name, location: value.location, bonded: value.bonded });
+  const customerSnapshot = (value: NonNullable<typeof customer>) => ({ name: value.name });
+  const warehouseSnapshot = (value: NonNullable<typeof warehouse>) => ({ name: value.name, location: value.location, bonded: value.bonded });
   const masterAudits = [
-    { before: batchBefore ? batchSnapshot(batchBefore) : undefined, after: batchSnapshot(batch), entityType: "BusinessBatch", entityId: batch.id, action: batchBefore ? "BATCH_UPDATED" : "BATCH_CREATED" },
-    { before: customerBefore ? customerSnapshot(customerBefore) : undefined, after: customerSnapshot(customer), entityType: "Customer", entityId: customer.id, action: customerBefore ? "CUSTOMER_UPDATED" : "CUSTOMER_CREATED" },
-    { before: warehouseBefore ? warehouseSnapshot(warehouseBefore) : undefined, after: warehouseSnapshot(warehouse), entityType: "Warehouse", entityId: warehouse.id, action: warehouseBefore ? "WAREHOUSE_UPDATED" : "WAREHOUSE_CREATED" },
-  ].filter(audit => !audit.before || JSON.stringify(audit.before) !== JSON.stringify(audit.after));
+    batch ? { before: batchBefore ? batchSnapshot(batchBefore) : undefined, after: batchSnapshot(batch), entityType: "BusinessBatch", entityId: batch.id, action: batchBefore ? "BATCH_UPDATED" : "BATCH_CREATED" } : undefined,
+    customer ? { before: customerBefore ? customerSnapshot(customerBefore) : undefined, after: customerSnapshot(customer), entityType: "Customer", entityId: customer.id, action: customerBefore ? "CUSTOMER_UPDATED" : "CUSTOMER_CREATED" } : undefined,
+    warehouse ? { before: warehouseBefore ? warehouseSnapshot(warehouseBefore) : undefined, after: warehouseSnapshot(warehouse), entityType: "Warehouse", entityId: warehouse.id, action: warehouseBefore ? "WAREHOUSE_UPDATED" : "WAREHOUSE_CREATED" } : undefined,
+  ].filter((audit): audit is NonNullable<typeof audit> => Boolean(audit))
+    .filter(audit => !audit.before || JSON.stringify(audit.before) !== JSON.stringify(audit.after));
   for (const audit of masterAudits) {
     await tx.auditLog.create({
       data: {
@@ -243,6 +255,23 @@ async function upsertRelations(tx: Prisma.TransactionClient, data: VehiclePayloa
     });
   }
   return { batch, customer, warehouse };
+}
+
+function vehicleExtra(data: VehiclePayload, previous?: Prisma.JsonValue): Prisma.InputJsonObject {
+  return {
+    ...jsonObject(previous),
+    warehouseTimezone: CHINA_TIME_ZONE,
+    businessType: data.type,
+    referenceNo: data.referenceNo ?? null,
+    portOfLoad: data.portOfLoad ?? null,
+    portOfDischarge: data.portOfDischarge ?? null,
+    vesselVoyage: data.vesselVoyage ?? null,
+    etd: data.etd ?? null,
+    eta: data.eta ?? null,
+    manufacturer: data.manufacturer ?? null,
+    warehouse: data.warehouse ?? null,
+    warehouseLocation: data.warehouseLocation ?? null,
+  };
 }
 
 function datedEvents(data: VehiclePayload, actorId?: string) {
@@ -282,10 +311,10 @@ export async function createVehicle(data: VehiclePayload, idempotencyKey: string
         outboundAmount: data.outboundAmount,
         pickupDetails: data.pickupDetails,
         notes: data.notes,
-        extra: { warehouseTimezone: CHINA_TIME_ZONE },
-        batchId: batch.id,
-        customerId: customer.id,
-        warehouseId: warehouse.id,
+        extra: vehicleExtra(data),
+        batchId: batch?.id,
+        customerId: customer?.id,
+        warehouseId: warehouse?.id,
       },
     });
     await tx.inventoryEvent.create({
@@ -348,7 +377,7 @@ export async function updateVehicle(id: string, expectedVersion: number, data: V
     const before = toVehicleRecord(existing);
     const { batch, customer, warehouse } = await upsertRelations(tx, data, context);
     const nextStatus = data.status ? statusCodes[data.status] : existing.status;
-    const extra = { ...jsonObject(existing.extra), warehouseTimezone: CHINA_TIME_ZONE } as Prisma.InputJsonObject;
+    const extra = vehicleExtra(data, existing.extra);
     const result = await tx.vehicle.updateMany({
       where: { id, version: expectedVersion },
       data: {
@@ -367,9 +396,9 @@ export async function updateVehicle(id: string, expectedVersion: number, data: V
         pickupDetails: data.pickupDetails ?? null,
         notes: data.notes ?? null,
         extra,
-        batchId: batch.id,
-        customerId: customer.id,
-        warehouseId: warehouse.id,
+        batchId: batch?.id ?? null,
+        customerId: customer?.id ?? null,
+        warehouseId: warehouse?.id ?? null,
         version: { increment: 1 },
       },
     });
@@ -401,6 +430,36 @@ export async function updateVehicle(id: string, expectedVersion: number, data: V
       },
     });
     return updated;
+  });
+}
+
+export async function deleteVehicle(id: string, context: MutationContext = {}) {
+  return prisma.$transaction(async tx => {
+    const existing = await tx.vehicle.findUniqueOrThrow({ where: { id }, include: vehicleInclude });
+    const [attachments, pickupItems] = await Promise.all([
+      tx.attachment.findMany({
+        where: { OR: [{ vehicleId: id }, { inventoryEvent: { vehicleId: id } }] },
+        select: { objectKey: true },
+      }),
+      tx.pickupItem.findMany({ where: { vehicleId: id }, select: { pickupTaskId: true } }),
+    ]);
+    await tx.attachment.deleteMany({ where: { OR: [{ vehicleId: id }, { inventoryEvent: { vehicleId: id } }] } });
+    await tx.pickupItem.deleteMany({ where: { vehicleId: id } });
+    await tx.inventoryEvent.deleteMany({ where: { vehicleId: id } });
+    await tx.vehicle.delete({ where: { id } });
+    const taskIds = [...new Set(pickupItems.map(item => item.pickupTaskId))];
+    if (taskIds.length) await tx.pickupTask.deleteMany({ where: { id: { in: taskIds }, items: { none: {} } } });
+    await tx.auditLog.create({
+      data: {
+        actorId: context.actorId,
+        action: "VEHICLE_DELETED",
+        entityType: "Vehicle",
+        entityId: id,
+        before: auditSnapshot(toVehicleRecord(existing)),
+        ip: context.ip,
+      },
+    });
+    return { record: toVehicleRecord(existing), objectKeys: [...new Set(attachments.map(item => item.objectKey))] };
   });
 }
 

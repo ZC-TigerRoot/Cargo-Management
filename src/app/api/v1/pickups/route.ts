@@ -18,7 +18,7 @@ const statusLabels: Record<VehicleStatus, string> = {
 
 function taskData(task: {
   id: string; taskNo: string; token: string; expiresAt: Date; revokedAt: Date | null; submittedAt: Date | null; createdAt: Date;
-  items: { vehicle: { id: string; vin: string; model: string } }[];
+  items: { vehicle: { id: string; vin: string | null; model: string | null } }[];
 }, publicBaseUrl: string) {
   const tokenPath = `/driver/${encodeURIComponent(task.token)}`;
   return {
@@ -29,7 +29,7 @@ function taskData(task: {
     expiresAt: task.expiresAt.toISOString(),
     createdAt: task.createdAt.toISOString(),
     status: task.revokedAt ? "revoked" : task.submittedAt ? "submitted" : task.expiresAt <= new Date() ? "expired" : "pending",
-    vehicles: task.items.map(item => item.vehicle),
+    vehicles: task.items.map(item => ({ ...item.vehicle, vin: item.vehicle.vin ?? undefined, model: item.vehicle.model ?? undefined })),
   };
 }
 
@@ -65,13 +65,13 @@ export async function POST(req: NextRequest) {
     });
     if (vehicles.length !== vehicleIds.length) return NextResponse.json({ error: "VEHICLE_NOT_FOUND", message: "部分车辆不存在，请刷新后重试" }, { status: 404 });
     const unavailable = vehicles.filter(vehicle => !["IN_STOCK", "PENDING_RELEASE", "PENDING_PICKUP"].includes(vehicle.status));
-    if (unavailable.length) return NextResponse.json({ error: "VEHICLE_NOT_AVAILABLE", message: `以下车辆当前不可提货：${unavailable.map(vehicle => vehicle.vin).join("、")}` }, { status: 409 });
+    if (unavailable.length) return NextResponse.json({ error: "VEHICLE_NOT_AVAILABLE", message: `以下车辆当前不可提货：${unavailable.map(vehicle => vehicle.vin || vehicle.model || vehicle.id).join("、")}` }, { status: 409 });
     const activeItems = await prisma.pickupItem.findMany({
       where: { vehicleId: { in: vehicleIds }, pickupTask: { submittedAt: null, revokedAt: null, expiresAt: { gt: new Date() } } },
       select: { vehicleId: true },
     });
     if (activeItems.length) {
-      const vins = vehicles.filter(vehicle => activeItems.some(item => item.vehicleId === vehicle.id)).map(vehicle => vehicle.vin);
+      const vins = vehicles.filter(vehicle => activeItems.some(item => item.vehicleId === vehicle.id)).map(vehicle => vehicle.vin || vehicle.model || vehicle.id);
       return NextResponse.json({ error: "ACTIVE_TASK_EXISTS", message: `以下车辆已有有效提货任务：${vins.join("、")}。请在右侧任务卡片中查看二维码。` }, { status: 409 });
     }
 

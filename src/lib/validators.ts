@@ -3,6 +3,8 @@ import { vehicleStatuses } from "./domain";
 import { CHINA_TIME_ZONE } from "./datetime";
 
 const optionalText = z.string().trim().optional().transform(value => value || undefined);
+const optionalVin = z.string().trim().max(100, "车架号不能超过 100 个字符").optional()
+  .transform(value => value ? value.toUpperCase() : undefined);
 const optionalDateTime = z.iso.datetime({ offset: true }).optional();
 const optionalAmount = z.union([z.string().trim(), z.number().finite()]).optional().transform((value, ctx) => {
   if (value === undefined || value === "") return undefined;
@@ -15,11 +17,11 @@ const optionalAmount = z.union([z.string().trim(), z.number().finite()]).optiona
 });
 
 export const vehiclePayload = z.object({
-  vin: z.string().trim().min(1, "车架号不能为空").max(100, "车架号不能超过 100 个字符").transform(value => value.toUpperCase()),
-  model: z.string().trim().min(1, "车型不能为空"),
+  vin: optionalVin,
+  model: optionalText,
   brand: optionalText,
   type: z.enum(["overseas", "domestic"]),
-  referenceNo: z.string().trim().min(1, "提单号或 PO# 不能为空"),
+  referenceNo: optionalText,
   hsCode: optionalText,
   portOfLoad: optionalText,
   portOfDischarge: optionalText,
@@ -27,10 +29,10 @@ export const vehiclePayload = z.object({
   etd: optionalDateTime,
   eta: optionalDateTime,
   manufacturer: optionalText,
-  warehouseLocation: z.string().trim().min(1, "仓库地点不能为空"),
-  warehouse: z.string().trim().min(1, "入库仓库名称不能为空"),
+  warehouseLocation: optionalText,
+  warehouse: optionalText,
   warehouseTimezone: z.literal(CHINA_TIME_ZONE),
-  customer: z.string().trim().min(1, "所属客人不能为空"),
+  customer: optionalText,
   inboundAt: optionalDateTime,
   inboundAmount: optionalAmount,
   inboundBoeNo: optionalText,
@@ -70,4 +72,6 @@ export const vehicleUpdateInput = vehiclePayload.and(z.object({
 export const driverSubmission = z.object({
   pickupAt: z.iso.datetime(),
   idempotencyKey: z.string().min(8),
+  driverLabel: z.string().trim().min(1, "请填写司机名称").max(100, "司机名称不能超过 100 个字符"),
+  driverName: z.string().trim().min(1, "请填写姓名").max(100, "姓名不能超过 100 个字符"),
 });
