@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from "react";
 import Link from "next/link";
-import { ArrowDown, ArrowUp, ArrowUpDown, SlidersHorizontal, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, GripVertical, SlidersHorizontal, Trash2 } from "lucide-react";
 import { inventoryDays, type VehicleRecord } from "@/lib/domain";
 import { chinaDateTime } from "@/lib/datetime";
 
@@ -14,7 +14,7 @@ type Column = {
 };
 
 const columns: Column[] = [
-  { id: "vehicle", label: "车辆", value: vehicle => `${vehicle.model ?? ""} ${vehicle.vin ?? ""}`, render: vehicle => <><b>{vehicle.model || "未填写车型"}</b><small>{vehicle.vin || "未填写车架号"}</small></> },
+  { id: "vehicle", label: "车辆", value: vehicle => `${vehicle.vin ?? ""} ${vehicle.model ?? ""}`, render: vehicle => <><b>{vehicle.vin || "未填写车架号"}</b><small>{vehicle.model || "未填写车型"}</small></> },
   { id: "business", label: "业务 / 批次", value: vehicle => `${vehicle.type} ${vehicle.referenceNo ?? ""}`, render: vehicle => <><span className={`type type-${vehicle.type}`}>{vehicle.type === "overseas" ? "海外仓" : "国内仓"}</span><small>{vehicle.referenceNo || "未填写批次"}</small></> },
   { id: "warehouse", label: "仓库", value: vehicle => `${vehicle.warehouse ?? ""} ${vehicle.warehouseLocation ?? ""}`, render: vehicle => <>{vehicle.warehouse || "—"}<small>{vehicle.warehouseLocation || "未填写地点"}</small></> },
   { id: "customer", label: "所属客户", value: vehicle => vehicle.customer },
@@ -53,6 +53,8 @@ export default function VehicleTable({ rows, storageKey = "cargo.vehicle-table",
   const [sort, setSort] = useState("updatedAt");
   const [direction, setDirection] = useState<"asc" | "desc">("desc");
   const [ready, setReady] = useState(false);
+  const [draggingId, setDraggingId] = useState("");
+  const [dropTarget, setDropTarget] = useState<{ id: string; edge: "before" | "after" }>();
   const [deletingId, setDeletingId] = useState("");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [bulkDeleting, setBulkDeleting] = useState(false);
@@ -114,6 +116,48 @@ export default function VehicleTable({ rows, storageKey = "cargo.vehicle-table",
       [next[from], next[to]] = [next[to], next[from]];
       return next;
     });
+  }
+
+  function reorder(draggedId: string, targetId: string, edge: "before" | "after") {
+    if (draggedId === targetId) return;
+    setOrder(current => {
+      const next = current.filter(id => id !== draggedId);
+      const targetIndex = next.indexOf(targetId);
+      if (targetIndex < 0) return current;
+      next.splice(targetIndex + (edge === "after" ? 1 : 0), 0, draggedId);
+      return next;
+    });
+  }
+
+  function startColumnDrag(event: DragEvent<HTMLButtonElement>, id: string) {
+    setDraggingId(id);
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", id);
+  }
+
+  function dragOverColumn(event: DragEvent<HTMLDivElement>, id: string) {
+    event.preventDefault();
+    if (!draggingId || draggingId === id) {
+      setDropTarget(undefined);
+      return;
+    }
+    const bounds = event.currentTarget.getBoundingClientRect();
+    setDropTarget({ id, edge: event.clientY < bounds.top + bounds.height / 2 ? "before" : "after" });
+    event.dataTransfer.dropEffect = "move";
+  }
+
+  function dropColumn(event: DragEvent<HTMLDivElement>, targetId: string) {
+    event.preventDefault();
+    const draggedId = draggingId || event.dataTransfer.getData("text/plain");
+    if (draggedId && dropTarget) reorder(draggedId, targetId, dropTarget.edge);
+    setDraggingId("");
+    setDropTarget(undefined);
+  }
+
+  function handleDragKey(event: KeyboardEvent<HTMLButtonElement>, id: string) {
+    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+    event.preventDefault();
+    move(id, event.key === "ArrowUp" ? -1 : 1);
   }
 
   function reset() {
@@ -182,10 +226,11 @@ export default function VehicleTable({ rows, storageKey = "cargo.vehicle-table",
       {canDelete && <div className="bulk-actions"><span>已选 {selectedVisibleIds.length} 条</span><button type="button" disabled={!selectedVisibleIds.length || bulkDeleting || Boolean(deletingId)} onClick={removeSelected}><Trash2 />{bulkDeleting ? "删除中…" : "批量删除"}</button></div>}
       <label><ArrowUpDown />排序<select value={sort} onChange={event => setSort(event.target.value)}>{columns.map(column => <option value={column.id} key={column.id}>{column.label}</option>)}</select></label>
       <button type="button" onClick={() => setDirection(current => current === "asc" ? "desc" : "asc")}>{direction === "asc" ? <ArrowUp /> : <ArrowDown />}{direction === "asc" ? "升序" : "降序"}</button>
-      <details><summary><SlidersHorizontal />显示与排列属性</summary><div className="column-picker">{order.map((id, index) => {
+      <details><summary><SlidersHorizontal />显示与排列属性</summary><div className="column-picker">{order.map(id => {
         const column = columnById.get(id)!;
         const checked = visible.includes(id);
-        return <div key={id}><label><input type="checkbox" checked={checked} onChange={event => setVisible(current => event.target.checked ? [...current, id] : current.length > 1 ? current.filter(item => item !== id) : current)} />{column.label}</label><span><button type="button" onClick={() => move(id, -1)} disabled={index === 0} aria-label={`上移${column.label}`}><ArrowUp /></button><button type="button" onClick={() => move(id, 1)} disabled={index === order.length - 1} aria-label={`下移${column.label}`}><ArrowDown /></button></span></div>;
+        const dropClass = dropTarget?.id === id ? ` drop-${dropTarget.edge}` : "";
+        return <div key={id} className={`column-picker-item${draggingId === id ? " is-dragging" : ""}${dropClass}`} onDragOver={event => dragOverColumn(event, id)} onDrop={event => dropColumn(event, id)}><label><input type="checkbox" checked={checked} onChange={event => setVisible(current => event.target.checked ? [...current, id] : current.length > 1 ? current.filter(item => item !== id) : current)} />{column.label}</label><button type="button" className="column-drag-handle" draggable onDragStart={event => startColumnDrag(event, id)} onDragEnd={() => { setDraggingId(""); setDropTarget(undefined); }} onKeyDown={event => handleDragKey(event, id)} aria-label={`拖动排列${column.label}`} title="按住并上下拖动调整顺序"><GripVertical /></button></div>;
       })}<button type="button" className="reset-columns" onClick={reset}>恢复默认</button></div></details>
     </div>
     <div className="table-wrap"><table><thead><tr>{canDelete && <th className="row-select"><input ref={selectAllRef} type="checkbox" checked={allVisibleSelected} disabled={!sorted.length || bulkDeleting} onChange={event => toggleAllVisible(event.target.checked)} aria-label="全选当前列表" /></th>}{visibleColumns.map(column => <th key={column.id}>{column.label}</th>)}<th></th></tr></thead><tbody>{sorted.map(vehicle => <tr key={vehicle.id} className={selectedIds.includes(vehicle.id) ? "selected-row" : undefined}>{canDelete && <td className="row-select"><input type="checkbox" checked={selectedIds.includes(vehicle.id)} disabled={bulkDeleting || deletingId === vehicle.id} onChange={event => setSelectedIds(current => event.target.checked ? [...current, vehicle.id] : current.filter(id => id !== vehicle.id))} aria-label={`选择${vehicle.vin || vehicle.model || "未命名单据"}`} /></td>}{visibleColumns.map(column => <td key={column.id}>{column.render ? column.render(vehicle) : column.value(vehicle) ?? "—"}</td>)}<td><div className="vehicle-row-actions"><Link href={`/vehicles/${vehicle.id}`}>查看 →</Link>{canDelete && <button type="button" className="vehicle-delete" disabled={bulkDeleting || deletingId === vehicle.id} onClick={() => remove(vehicle)} title="删除车辆"><Trash2 />{deletingId === vehicle.id ? "删除中" : "删除"}</button>}</div></td></tr>)}</tbody></table>{!sorted.length && <div className="empty">暂无符合条件的车辆</div>}</div>
