@@ -4,24 +4,10 @@ import * as XLSX from "xlsx";
 import { prisma } from "./prisma";
 import { vehiclePayload } from "./validators";
 import type { VehiclePayload } from "./vehicle-repository";
+import { domesticExcelHeaders, overseasExcelHeaders } from "./vehicle-excel";
 
 export const MAX_IMPORT_FILE_SIZE = 10 * 1024 * 1024;
 export const MAX_IMPORT_ROWS = 10_000;
-
-const commonTail = [
-  "商社通知放车时间", "出库提货明细", "库存天数", "客户交付签收单日期", "外代交付签收单给商社时间", "备注",
-];
-const overseasHeaders = [
-  "提单号", "车架号", "车型", "HS#", "起运港", "目的港", "船名航次", "ETD", "ETA", "保税仓地点",
-  "入保税仓库时间", "入库金额", "入库BOE号", "入库仓库名称", "所属客人", "商社通知放车时间", "客户通知做过户文件时间",
-  "客户通知放车时间", "出库提货明细", "实际出保税库时间", "出库BOE号", "BOE抬头", "出库金额", "库存天数", "出库通知单交付给商社日期",
-  "客户交付签收单日期", "外代交付签收单给商社时间", "备注",
-];
-const domesticHeaders = [
-  "车架号", "车型", "品牌", "生产商", "PO#", "仓库地点", "入仓库时间", "入库金额", "入库BOE号", "入库仓库名称", "所属客人",
-  ...commonTail.slice(0, 2), "实际出保税库时间", "出库BOE号", "BOE抬头", "出库金额", ...commonTail.slice(2, 3), "出库通知单交付给商社",
-  ...commonTail.slice(3),
-];
 
 export class ImportWorkbookError extends Error {
   constructor(public code: string, message: string, public status: number) {
@@ -127,7 +113,7 @@ export async function checkWorkbook(file: File): Promise<CheckedWorkbook> {
   const overseas = headers.includes("提单号");
   const domestic = headers.includes("PO#");
   if (overseas === domestic) throw new ImportWorkbookError("UNKNOWN_TEMPLATE", "模板必须且只能包含“提单号”或“PO#”列", 422);
-  const expected = overseas ? overseasHeaders : domesticHeaders;
+  const expected: readonly string[] = overseas ? overseasExcelHeaders : domesticExcelHeaders;
   const missingHeaders = expected.filter(header => !headers.includes(header));
   const ignoredColumns = [...new Set(["库存天数", ...headers.filter(header => !expected.includes(header))])];
   const normalizedRows = sourceRows.map(row => Object.fromEntries(expected.map(header => [header, row[header] ?? ""])));
