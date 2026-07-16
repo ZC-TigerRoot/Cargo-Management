@@ -124,6 +124,7 @@ function eventHistory(vehicle: VehicleWithRelations): VehicleEventRecord[] {
       details: [
         typeof payload.driverLabel === "string" ? { label: "司机名称", value: payload.driverLabel } : undefined,
         typeof payload.driverName === "string" ? { label: "姓名", value: payload.driverName } : undefined,
+        typeof payload.driverPhone === "string" ? { label: "联系电话", value: payload.driverPhone } : undefined,
       ].filter((item): item is { label: string; value: string } => Boolean(item)),
       attachments: event.attachments.map(attachment => ({
         ...attachment,
@@ -433,33 +434,43 @@ export async function updateVehicle(id: string, expectedVersion: number, data: V
   });
 }
 
+async function deleteVehicleInTransaction(tx: Prisma.TransactionClient, id: string, context: MutationContext) {
+  const existing = await tx.vehicle.findUniqueOrThrow({ where: { id }, include: vehicleInclude });
+  const [attachments, pickupItems] = await Promise.all([
+    tx.attachment.findMany({
+      where: { OR: [{ vehicleId: id }, { inventoryEvent: { vehicleId: id } }] },
+      select: { objectKey: true },
+    }),
+    tx.pickupItem.findMany({ where: { vehicleId: id }, select: { pickupTaskId: true } }),
+  ]);
+  await tx.attachment.deleteMany({ where: { OR: [{ vehicleId: id }, { inventoryEvent: { vehicleId: id } }] } });
+  await tx.pickupItem.deleteMany({ where: { vehicleId: id } });
+  await tx.inventoryEvent.deleteMany({ where: { vehicleId: id } });
+  await tx.vehicle.delete({ where: { id } });
+  const taskIds = [...new Set(pickupItems.map(item => item.pickupTaskId))];
+  if (taskIds.length) await tx.pickupTask.deleteMany({ where: { id: { in: taskIds }, items: { none: {} } } });
+  await tx.auditLog.create({
+    data: {
+      actorId: context.actorId,
+      action: "VEHICLE_DELETED",
+      entityType: "Vehicle",
+      entityId: id,
+      before: auditSnapshot(toVehicleRecord(existing)),
+      ip: context.ip,
+    },
+  });
+  return { record: toVehicleRecord(existing), objectKeys: [...new Set(attachments.map(item => item.objectKey))] };
+}
+
 export async function deleteVehicle(id: string, context: MutationContext = {}) {
+  return prisma.$transaction(tx => deleteVehicleInTransaction(tx, id, context));
+}
+
+export async function deleteVehicles(ids: string[], context: MutationContext = {}) {
   return prisma.$transaction(async tx => {
-    const existing = await tx.vehicle.findUniqueOrThrow({ where: { id }, include: vehicleInclude });
-    const [attachments, pickupItems] = await Promise.all([
-      tx.attachment.findMany({
-        where: { OR: [{ vehicleId: id }, { inventoryEvent: { vehicleId: id } }] },
-        select: { objectKey: true },
-      }),
-      tx.pickupItem.findMany({ where: { vehicleId: id }, select: { pickupTaskId: true } }),
-    ]);
-    await tx.attachment.deleteMany({ where: { OR: [{ vehicleId: id }, { inventoryEvent: { vehicleId: id } }] } });
-    await tx.pickupItem.deleteMany({ where: { vehicleId: id } });
-    await tx.inventoryEvent.deleteMany({ where: { vehicleId: id } });
-    await tx.vehicle.delete({ where: { id } });
-    const taskIds = [...new Set(pickupItems.map(item => item.pickupTaskId))];
-    if (taskIds.length) await tx.pickupTask.deleteMany({ where: { id: { in: taskIds }, items: { none: {} } } });
-    await tx.auditLog.create({
-      data: {
-        actorId: context.actorId,
-        action: "VEHICLE_DELETED",
-        entityType: "Vehicle",
-        entityId: id,
-        before: auditSnapshot(toVehicleRecord(existing)),
-        ip: context.ip,
-      },
-    });
-    return { record: toVehicleRecord(existing), objectKeys: [...new Set(attachments.map(item => item.objectKey))] };
+    const deleted = [];
+    for (const id of ids) deleted.push(await deleteVehicleInTransaction(tx, id, context));
+    return deleted;
   });
 }
 

@@ -1,0 +1,4 @@
+interface:
+  display_name: "部署 Cargo 最新版本"
+  short_description: "通过 SSH 安全部署 Cargo 的 GitHub 最新主线版本"
+  default_prompt: "使用 $deploy-cargo-latest 拉取并部署 Cargo 最新版本。"

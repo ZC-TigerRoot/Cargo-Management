@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { ArrowDown, ArrowUp, ArrowUpDown, SlidersHorizontal, Trash2 } from "lucide-react";
 import { inventoryDays, type VehicleRecord } from "@/lib/domain";
@@ -54,7 +54,10 @@ export default function VehicleTable({ rows, storageKey = "cargo.vehicle-table",
   const [direction, setDirection] = useState<"asc" | "desc">("desc");
   const [ready, setReady] = useState(false);
   const [deletingId, setDeletingId] = useState("");
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
+  const selectAllRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
@@ -95,6 +98,12 @@ export default function VehicleTable({ rows, storageKey = "cargo.vehicle-table",
       return result === 0 ? left.index - right.index : direction === "asc" ? result : -result;
     }).map(item => item.vehicle);
   }, [direction, rows, sort]);
+  const selectedVisibleIds = sorted.map(vehicle => vehicle.id).filter(id => selectedIds.includes(id));
+  const allVisibleSelected = sorted.length > 0 && selectedVisibleIds.length === sorted.length;
+
+  useEffect(() => {
+    if (selectAllRef.current) selectAllRef.current.indeterminate = selectedVisibleIds.length > 0 && !allVisibleSelected;
+  }, [allVisibleSelected, selectedVisibleIds.length]);
 
   function move(id: string, offset: -1 | 1) {
     setOrder(current => {
@@ -128,6 +137,7 @@ export default function VehicleTable({ rows, storageKey = "cargo.vehicle-table",
       const result = await response.json();
       if (!response.ok) throw new Error(result.message || "删除失败");
       onDeleted?.(vehicle.id);
+      setSelectedIds(current => current.filter(id => id !== vehicle.id));
     } catch (reason) {
       setDeleteError(reason instanceof Error ? reason.message : "删除失败，请稍后重试");
     } finally {
@@ -135,9 +145,41 @@ export default function VehicleTable({ rows, storageKey = "cargo.vehicle-table",
     }
   }
 
+  function toggleAllVisible(checked: boolean) {
+    const visibleIds = sorted.map(vehicle => vehicle.id);
+    setSelectedIds(current => checked
+      ? [...new Set([...current, ...visibleIds])]
+      : current.filter(id => !visibleIds.includes(id)));
+  }
+
+  async function removeSelected() {
+    const ids = selectedVisibleIds;
+    if (!ids.length) return;
+    if (!window.confirm(`确认永久删除选中的 ${ids.length} 条单据？相关提货任务、业务事件和附件也会一并删除。`)) return;
+    setBulkDeleting(true);
+    setDeleteError("");
+    try {
+      const response = await fetch("/api/v1/vehicles", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || "批量删除失败");
+      const deletedIds = Array.isArray(result.data?.ids) ? result.data.ids as string[] : ids;
+      for (const id of deletedIds) onDeleted?.(id);
+      setSelectedIds(current => current.filter(id => !deletedIds.includes(id)));
+    } catch (reason) {
+      setDeleteError(reason instanceof Error ? reason.message : "批量删除失败，请稍后重试");
+    } finally {
+      setBulkDeleting(false);
+    }
+  }
+
   return <>
     {deleteError && <p className="form-error table-error" role="alert">{deleteError}</p>}
     <div className="column-toolbar">
+      {canDelete && <div className="bulk-actions"><span>已选 {selectedVisibleIds.length} 条</span><button type="button" disabled={!selectedVisibleIds.length || bulkDeleting || Boolean(deletingId)} onClick={removeSelected}><Trash2 />{bulkDeleting ? "删除中…" : "批量删除"}</button></div>}
       <label><ArrowUpDown />排序<select value={sort} onChange={event => setSort(event.target.value)}>{columns.map(column => <option value={column.id} key={column.id}>{column.label}</option>)}</select></label>
       <button type="button" onClick={() => setDirection(current => current === "asc" ? "desc" : "asc")}>{direction === "asc" ? <ArrowUp /> : <ArrowDown />}{direction === "asc" ? "升序" : "降序"}</button>
       <details><summary><SlidersHorizontal />显示与排列属性</summary><div className="column-picker">{order.map((id, index) => {
@@ -146,6 +188,6 @@ export default function VehicleTable({ rows, storageKey = "cargo.vehicle-table",
         return <div key={id}><label><input type="checkbox" checked={checked} onChange={event => setVisible(current => event.target.checked ? [...current, id] : current.length > 1 ? current.filter(item => item !== id) : current)} />{column.label}</label><span><button type="button" onClick={() => move(id, -1)} disabled={index === 0} aria-label={`上移${column.label}`}><ArrowUp /></button><button type="button" onClick={() => move(id, 1)} disabled={index === order.length - 1} aria-label={`下移${column.label}`}><ArrowDown /></button></span></div>;
       })}<button type="button" className="reset-columns" onClick={reset}>恢复默认</button></div></details>
     </div>
-    <div className="table-wrap"><table><thead><tr>{visibleColumns.map(column => <th key={column.id}>{column.label}</th>)}<th></th></tr></thead><tbody>{sorted.map(vehicle => <tr key={vehicle.id}>{visibleColumns.map(column => <td key={column.id}>{column.render ? column.render(vehicle) : column.value(vehicle) ?? "—"}</td>)}<td><div className="vehicle-row-actions"><Link href={`/vehicles/${vehicle.id}`}>查看 →</Link>{canDelete && <button type="button" className="vehicle-delete" disabled={deletingId === vehicle.id} onClick={() => remove(vehicle)} title="删除车辆"><Trash2 />{deletingId === vehicle.id ? "删除中" : "删除"}</button>}</div></td></tr>)}</tbody></table>{!sorted.length && <div className="empty">暂无符合条件的车辆</div>}</div>
+    <div className="table-wrap"><table><thead><tr>{canDelete && <th className="row-select"><input ref={selectAllRef} type="checkbox" checked={allVisibleSelected} disabled={!sorted.length || bulkDeleting} onChange={event => toggleAllVisible(event.target.checked)} aria-label="全选当前列表" /></th>}{visibleColumns.map(column => <th key={column.id}>{column.label}</th>)}<th></th></tr></thead><tbody>{sorted.map(vehicle => <tr key={vehicle.id} className={selectedIds.includes(vehicle.id) ? "selected-row" : undefined}>{canDelete && <td className="row-select"><input type="checkbox" checked={selectedIds.includes(vehicle.id)} disabled={bulkDeleting || deletingId === vehicle.id} onChange={event => setSelectedIds(current => event.target.checked ? [...current, vehicle.id] : current.filter(id => id !== vehicle.id))} aria-label={`选择${vehicle.vin || vehicle.model || "未命名单据"}`} /></td>}{visibleColumns.map(column => <td key={column.id}>{column.render ? column.render(vehicle) : column.value(vehicle) ?? "—"}</td>)}<td><div className="vehicle-row-actions"><Link href={`/vehicles/${vehicle.id}`}>查看 →</Link>{canDelete && <button type="button" className="vehicle-delete" disabled={bulkDeleting || deletingId === vehicle.id} onClick={() => remove(vehicle)} title="删除车辆"><Trash2 />{deletingId === vehicle.id ? "删除中" : "删除"}</button>}</div></td></tr>)}</tbody></table>{!sorted.length && <div className="empty">暂无符合条件的车辆</div>}</div>
   </>;
 }

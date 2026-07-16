@@ -11,6 +11,7 @@ import { can, inventoryDays, roleLabels, type BusinessType, type VehicleRecord }
 import { useVehicleRecords } from "@/lib/use-vehicle-records";
 import { useSession } from "@/lib/use-session";
 import { CHINA_TIME_ZONE, chinaDateTime, localInputValue, zonedLocalToIso } from "@/lib/datetime";
+import { matchesPickupSearch, pickupTaskMatchesSearch, pickupVehicleSearchValues } from "@/lib/pickup-search";
 
 type Kind = "vehicles" | "overseas" | "domestic" | "pickups" | "imports" | "reports" | "settings";
 const meta: Record<Kind, { eyebrow: string; title: string; description: string }> = {
@@ -85,11 +86,15 @@ function expiryDefault() {
 function PickupModule({ records, canCreate }: { records: VehicleRecord[]; canCreate: boolean }) {
   const [tasks, setTasks] = useState<PickupTask[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
+  const [query, setQuery] = useState("");
   const [expiresAt, setExpiresAt] = useState(expiryDefault);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [pickupQr, setPickupQr] = useState<PickupQr>();
   const eligible = records.filter(vehicle => !vehicle.outboundAt && ["在库", "待放车", "待提货"].includes(vehicle.status));
+  const recordById = useMemo(() => new Map(records.map(vehicle => [vehicle.id, vehicle])), [records]);
+  const filteredEligible = eligible.filter(vehicle => matchesPickupSearch(pickupVehicleSearchValues(vehicle), query));
+  const filteredTasks = tasks.filter(task => pickupTaskMatchesSearch(task, recordById, query));
 
   useEffect(() => {
     fetch("/api/v1/pickups").then(async response => {
@@ -133,8 +138,15 @@ function PickupModule({ records, canCreate }: { records: VehicleRecord[]; canCre
 
   const statusName = { pending: "进行中", submitted: "已签收", expired: "已过期", revoked: "已撤销" };
   return <div className="pickup-layout">
-    <article className="panel pickup-create"><h3>{canCreate ? "创建提货二维码" : "查看提货二维码"}</h3>{canCreate && <form onSubmit={createTask}><div className="pickup-vehicles">{eligible.map(vehicle => <label key={vehicle.id}><input type="checkbox" checked={selected.includes(vehicle.id)} onChange={event => setSelected(current => event.target.checked ? [...current, vehicle.id] : current.filter(id => id !== vehicle.id))}/><span><b>{vehicle.model || "未填写车型"}</b><small>{vehicle.vin || "未填写车架号"} · {vehicle.warehouse || "未填写仓库"}</small></span></label>)}{!eligible.length && <p className="muted">暂无可创建提货任务的车辆</p>}</div><label className="expiry-field">二维码有效期<input type="datetime-local" value={expiresAt} onChange={event => setExpiresAt(event.target.value)} required/></label><button className="primary-button" disabled={loading || !selected.length}>{loading ? "创建中…" : "生成提货二维码"}</button></form>}{pickupQr ? <div className="qr-result"><b>{pickupQr.taskNo}</b><Image src={pickupQr.qr} width={180} height={180} unoptimized alt="司机提货二维码"/><div className="qr-actions"><a href={pickupQr.url} target="_blank" rel="noreferrer">打开签收页</a><a href={pickupQr.qr} download={`${pickupQr.taskNo}-二维码.png`}>下载二维码</a></div><p>{pickupQr.url}</p><small>此二维码可随时从右侧任务中重新查看。</small></div> : !canCreate && <p className="muted">请从右侧任务中选择“查看二维码”。</p>}{error && <p className="form-error">{error}</p>}</article>
-    <div className="module-cards pickup-cards">{tasks.map(task => <article className="panel action-card" key={task.id}><span>{statusName[task.status]}</span><h3>{task.taskNo}</h3><p>{task.vehicles.map(vehicle => vehicle.model || "未填写车型").join("、")}</p><small>{task.vehicles.map(vehicle => vehicle.vin ? `···${vehicle.vin.slice(-6)}` : "未填写车架号").join(" · ")}<br/>有效至 {chinaDateTime(task.expiresAt)}</small><button type="button" className="task-qr-button" onClick={() => showTaskQr(task)}>查看二维码</button></article>)}{!tasks.length && !error && <p className="muted">暂无提货任务</p>}</div>
+    <div className="panel pickup-search-toolbar"><label className="search"><Search/><input type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索任务号、提单号 / PO、车架号、车型、客户或仓库…" aria-label="搜索提货二维码车辆"/></label><span>{query.trim() ? "找到" : "共"} {filteredEligible.length} 辆可生成 · {filteredTasks.length} 个已有任务</span></div>
+    <article className="panel pickup-create"><h3>{canCreate ? "创建提货二维码" : "查看提货二维码"}</h3>{canCreate && <form onSubmit={createTask}><div className="pickup-vehicles">{filteredEligible.map(vehicle => <label key={vehicle.id}><input type="checkbox" checked={selected.includes(vehicle.id)} onChange={event => setSelected(current => event.target.checked ? [...current, vehicle.id] : current.filter(id => id !== vehicle.id))}/><span><b>{vehicle.model || "未填写车型"}</b><small>{vehicle.referenceNo || "未填写提单号 / PO"} · {vehicle.vin || "未填写车架号"}<br/>{vehicle.customer || "未填写客户"} · {vehicle.warehouse || "未填写仓库"}</small></span></label>)}{!filteredEligible.length && <p className="muted">{query.trim() ? "没有找到可生成二维码的车辆" : "暂无可创建提货任务的车辆"}</p>}</div><label className="expiry-field">二维码有效期<input type="datetime-local" value={expiresAt} onChange={event => setExpiresAt(event.target.value)} required/></label><button className="primary-button" disabled={loading || !selected.length}>{loading ? "创建中…" : `生成提货二维码${selected.length ? `（已选 ${selected.length} 辆）` : ""}`}</button></form>}{pickupQr ? <div className="qr-result"><b>{pickupQr.taskNo}</b><Image src={pickupQr.qr} width={180} height={180} unoptimized alt="司机提货二维码"/><div className="qr-actions"><a href={pickupQr.url} target="_blank" rel="noreferrer">打开签收页</a><a href={pickupQr.qr} download={`${pickupQr.taskNo}-二维码.png`}>下载二维码</a></div><p>{pickupQr.url}</p><small>此二维码可随时从右侧任务中重新查看。</small></div> : !canCreate && <p className="muted">请从右侧任务中选择“查看二维码”。</p>}{error && <p className="form-error">{error}</p>}</article>
+    <div className="module-cards pickup-cards">{filteredTasks.map(task => {
+      const references = [...new Set(task.vehicles.flatMap(vehicle => {
+        const referenceNo = recordById.get(vehicle.id)?.referenceNo;
+        return referenceNo ? [referenceNo] : [];
+      }))];
+      return <article className="panel action-card" key={task.id}><span>{statusName[task.status]}</span><h3>{task.taskNo}</h3><p>{task.vehicles.map(vehicle => vehicle.model || "未填写车型").join("、")}</p><small>{references.length ? <>单号 {references.join(" · ")}<br/></> : null}{task.vehicles.map(vehicle => vehicle.vin ? `···${vehicle.vin.slice(-6)}` : "未填写车架号").join(" · ")}<br/>有效至 {chinaDateTime(task.expiresAt)}</small><button type="button" className="task-qr-button" onClick={() => showTaskQr(task)}>查看二维码</button></article>;
+    })}{!filteredTasks.length && !error && <p className="muted">{query.trim() ? "没有找到已有二维码任务" : "暂无提货任务"}</p>}</div>
   </div>;
 }
 

@@ -1,4 +1,7 @@
 .pickup-layout { display: grid; grid-template-columns: minmax(300px, .9fr) 1.4fr; gap: 16px; align-items: start; }
+.pickup-search-toolbar { grid-column: 1 / -1; display: flex; align-items: center; gap: 14px; padding: 14px 16px; }
+.pickup-search-toolbar .search { flex: 1; min-width: 240px; max-width: 720px; }
+.pickup-search-toolbar>span { margin-left: auto; color: var(--muted); font-size: 10px; white-space: nowrap; }
 .pickup-create { padding: 22px; }
 .pickup-create h3 { margin: 0 0 16px; }
 .pickup-create form { display: grid; gap: 14px; }
@@ -23,6 +26,13 @@
 .column-toolbar details { position: relative; }
 .column-toolbar summary { list-style: none; }
 .column-toolbar summary::-webkit-details-marker { display: none; }
+.bulk-actions { display: flex; align-items: center; gap: 9px; margin-right: auto; }
+.bulk-actions>span { color: var(--muted); font-size: 10px; white-space: nowrap; }
+.bulk-actions>button { min-height: 34px; display: inline-flex; align-items: center; gap: 5px; padding: 0 10px; border: 1px solid #ead3cf; border-radius: 8px; background: #fff; color: #a3483f; font-size: 10px; font-weight: 700; cursor: pointer; }
+.bulk-actions>button:disabled { opacity: .45; cursor: not-allowed; }
+.row-select { width: 44px; padding-left: 15px; padding-right: 5px; text-align: center; }
+.row-select input { width: 15px; height: 15px; accent-color: var(--green); cursor: pointer; }
+.selected-row { background: #f2f7f4; }
 .column-picker { position: absolute; z-index: 12; right: 0; top: 40px; width: 290px; max-height: 440px; overflow: auto; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: #fff; box-shadow: 0 16px 45px #183a2e26; }
 .column-picker>div { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 8px; padding: 7px 5px; border-bottom: 1px solid #edf0ed; }
 .column-picker label { display: flex; align-items: center; gap: 7px; font-size: 11px; }
@@ -61,6 +71,9 @@
 
 @media (max-width: 760px) {
   .pickup-cards { grid-template-columns: 1fr; }
+  .pickup-search-toolbar { align-items: flex-start; flex-direction: column; gap: 8px; }
+  .pickup-search-toolbar .search { width: 100%; min-width: 0; }
+  .pickup-search-toolbar>span { margin-left: 0; }
   .settings-domain-card { grid-column: span 1; }
   .settings-form { grid-template-columns: 1fr; }
   .column-toolbar { justify-content: flex-start; flex-wrap: wrap; padding: 0 12px 12px; }

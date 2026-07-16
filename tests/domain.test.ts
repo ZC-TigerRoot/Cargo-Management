@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { can, inventoryDays, transitions } from "../src/lib/domain";
-import { driverSubmission, vehicleInput, vehicleUpdateInput } from "../src/lib/validators";
+import { driverSubmission, vehicleDeleteInput, vehicleInput, vehicleUpdateInput } from "../src/lib/validators";
 import { localInputValue, zonedLocalToIso } from "../src/lib/datetime";
+import { matchesPickupSearch, pickupTaskMatchesSearch, pickupVehicleSearchValues } from "../src/lib/pickup-search";
 
 describe("库存领域规则", () => {
   it("出库后库存天数固定", () => expect(inventoryDays("2026-07-01T00:00:00Z", "2026-07-11T00:00:00Z", new Date("2026-08-01"))).toBe(10));
@@ -30,8 +31,8 @@ describe("司机提车凭证校验", () => {
   const base = {
     pickupAt: "2026-07-15T08:00:00.000Z",
     idempotencyKey: "driver-submit-001",
-    driverLabel: "沪运车队",
     driverName: "张师傅",
+    driverPhone: "138 0013 8000",
   };
 
   it("只校验签收元数据，不接收 Base64 图片内容", () => {
@@ -44,9 +45,58 @@ describe("司机提车凭证校验", () => {
     expect(driverSubmission.safeParse({ ...base, pickupAt: "invalid" }).success).toBe(false);
   });
 
-  it("司机名称和姓名均为必填", () => {
-    expect(driverSubmission.safeParse({ ...base, driverLabel: "" }).success).toBe(false);
+  it("姓名和联系电话均为必填", () => {
     expect(driverSubmission.safeParse({ ...base, driverName: "" }).success).toBe(false);
+    expect(driverSubmission.safeParse({ ...base, driverPhone: "" }).success).toBe(false);
+  });
+
+  it("拒绝无效联系电话", () => {
+    expect(driverSubmission.safeParse({ ...base, driverPhone: "abc123" }).success).toBe(false);
+  });
+});
+
+describe("车辆删除校验", () => {
+  it("兼容单条删除并规范成数组", () => {
+    expect(vehicleDeleteInput.parse({ id: "vehicle-001" })).toEqual({ ids: ["vehicle-001"] });
+  });
+
+  it("接受批量删除且拒绝空数组", () => {
+    expect(vehicleDeleteInput.parse({ ids: ["vehicle-001", "vehicle-002"] })).toEqual({ ids: ["vehicle-001", "vehicle-002"] });
+    expect(vehicleDeleteInput.safeParse({ ids: [] }).success).toBe(false);
+  });
+});
+
+describe("提货二维码搜索", () => {
+  const vehicle = {
+    id: "vehicle-001",
+    version: 1,
+    vin: "LC0CE4CC5R0123456",
+    model: "BYD TANG L EV",
+    brand: "BYD",
+    type: "domestic" as const,
+    referenceNo: "PO-2026-0716",
+    warehouse: "上海临港仓",
+    warehouseLocation: "上海",
+    warehouseTimezone: "Asia/Shanghai",
+    customer: "远洋汽车",
+    inboundBoeNo: "BOE-IN-0716",
+    status: "在库" as const,
+    updatedAt: "2026-07-16T00:00:00.000Z",
+  };
+
+  it("可按多个单据信息关键词匹配车辆", () => {
+    const values = pickupVehicleSearchValues(vehicle);
+    expect(matchesPickupSearch(values, "PO-2026 BYD")).toBe(true);
+    expect(matchesPickupSearch(values, "远洋 临港")).toBe(true);
+    expect(matchesPickupSearch(values, "不存在的单号")).toBe(false);
+  });
+
+  it("已有二维码任务可回查车辆台账中的单号和 BOE", () => {
+    const task = { taskNo: "PU-20260716-001", vehicles: [{ id: vehicle.id, vin: vehicle.vin, model: vehicle.model }] };
+    const records = new Map([[vehicle.id, vehicle]]);
+    expect(pickupTaskMatchesSearch(task, records, "PU-20260716")).toBe(true);
+    expect(pickupTaskMatchesSearch(task, records, "PO-2026-0716")).toBe(true);
+    expect(pickupTaskMatchesSearch(task, records, "BOE-IN-0716")).toBe(true);
   });
 });
 

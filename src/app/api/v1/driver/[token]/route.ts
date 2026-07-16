@@ -23,6 +23,7 @@ function submittedDriver(value: Prisma.JsonValue | null) {
   return {
     driverLabel: typeof submission.driverLabel === "string" ? submission.driverLabel : undefined,
     driverName: typeof submission.driverName === "string" ? submission.driverName : undefined,
+    driverPhone: typeof submission.driverPhone === "string" ? submission.driverPhone : undefined,
   };
 }
 
@@ -87,8 +88,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
     const parsed = driverSubmission.safeParse({
       pickupAt: form.get("pickupAt"),
       idempotencyKey: form.get("idempotencyKey"),
-      driverLabel: form.get("driverLabel"),
       driverName: form.get("driverName"),
+      driverPhone: form.get("driverPhone"),
     });
     if (!parsed.success) return NextResponse.json({ error: "VALIDATION_ERROR", issues: parsed.error.flatten() }, { status: 422 });
     const photo = form.get("photo");
@@ -128,8 +129,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
             payload: {
               taskNo: task!.taskNo,
               photoUploaded: true,
-              driverLabel: parsed.data.driverLabel,
               driverName: parsed.data.driverName,
+              driverPhone: parsed.data.driverPhone,
               actorLabel: driverActor,
               reason: `提货任务 ${task!.taskNo} 已完成，司机已填写信息并上传现场照片。`,
             },
@@ -152,7 +153,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
             entityType: "Vehicle",
             entityId: item.vehicle.id,
             before: { status: statusLabels[item.vehicle.status], version: item.vehicle.version },
-            after: { status: "已完成", version: item.vehicle.version + 1, taskNo: task!.taskNo, driverLabel: parsed.data.driverLabel, driverName: parsed.data.driverName },
+            after: { status: "已完成", version: item.vehicle.version + 1, taskNo: task!.taskNo, driverName: parsed.data.driverName, driverPhone: parsed.data.driverPhone },
             ip: requestIp(req),
           },
         });
@@ -164,7 +165,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
           entityType: "PickupTask",
           entityId: task!.id,
           before: { taskNo: task!.taskNo, submittedAt: null, status: "pending" },
-          after: { taskNo: task!.taskNo, submittedAt: now.toISOString(), status: "submitted", photoUploaded: true, driverLabel: parsed.data.driverLabel, driverName: parsed.data.driverName, vehicleIds: task!.items.map(item => item.vehicle.id) },
+          after: { taskNo: task!.taskNo, submittedAt: now.toISOString(), status: "submitted", photoUploaded: true, driverName: parsed.data.driverName, driverPhone: parsed.data.driverPhone, vehicleIds: task!.items.map(item => item.vehicle.id) },
           ip: requestIp(req),
         },
       });
@@ -179,7 +180,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
       return NextResponse.json({ error: "SUBMISSION_CONFLICT", message: "任务状态已变化，请刷新后重试" }, { status: 409 });
     }
     uploadCommitted = true;
-    return NextResponse.json({ data: { status: "submitted", receiptNo: receiptNo(task!.taskNo), submittedAt: now.toISOString(), driverLabel: parsed.data.driverLabel, driverName: parsed.data.driverName } }, { status: 201 });
+    return NextResponse.json({ data: { status: "submitted", receiptNo: receiptNo(task!.taskNo), submittedAt: now.toISOString(), driverName: parsed.data.driverName, driverPhone: parsed.data.driverPhone } }, { status: 201 });
   } catch (error) {
     if (error instanceof Error && error.message === "IMAGE_TOO_LARGE") {
       return NextResponse.json({ error: "PAYLOAD_TOO_LARGE", message: "车辆照片不能超过 5 MB" }, { status: 413 });

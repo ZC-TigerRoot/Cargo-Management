@@ -72,6 +72,15 @@ export const vehicleUpdateInput = vehiclePayload.and(z.object({
 export const driverSubmission = z.object({
   pickupAt: z.iso.datetime(),
   idempotencyKey: z.string().min(8),
-  driverLabel: z.string().trim().min(1, "请填写司机名称").max(100, "司机名称不能超过 100 个字符"),
   driverName: z.string().trim().min(1, "请填写姓名").max(100, "姓名不能超过 100 个字符"),
+  driverPhone: z.string().trim()
+    .min(1, "请填写联系电话")
+    .max(30, "联系电话不能超过 30 个字符")
+    .regex(/^[\d+\-()\s]+$/, "联系电话只能包含数字、空格、+、- 和括号")
+    .refine(value => (value.match(/\d/g)?.length ?? 0) >= 6, "请填写有效的联系电话"),
 });
+
+export const vehicleDeleteInput = z.union([
+  z.object({ id: z.string().min(1) }).transform(({ id }) => ({ ids: [id] })),
+  z.object({ ids: z.array(z.string().min(1)).min(1, "请至少选择一条单据").max(100, "单次最多删除 100 条单据") }),
+]);

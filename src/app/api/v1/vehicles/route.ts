@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
-import { z } from "zod";
-import { vehicleInput, vehicleUpdateInput } from "@/lib/validators";
-import { createVehicle, deleteVehicle, listVehicleAuditTrail, listVehicles, toVehicleRecord, updateVehicle, VersionConflictError } from "@/lib/vehicle-repository";
+import { vehicleDeleteInput, vehicleInput, vehicleUpdateInput } from "@/lib/validators";
+import { createVehicle, deleteVehicles, listVehicleAuditTrail, listVehicles, toVehicleRecord, updateVehicle, VersionConflictError } from "@/lib/vehicle-repository";
 import { assertSameOrigin, AuthorizationError, requestIp, requirePayloadWarehouseInScope, requireUser, requireVehicleInScope, vehicleScopeWhere } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { removeLocalUpload } from "@/lib/local-upload";
@@ -78,10 +77,12 @@ export async function DELETE(req: NextRequest) {
   try {
     const user = await requireUser("delete");
     assertSameOrigin(req);
-    const parsed = z.object({ id: z.string().min(1) }).safeParse(await req.json());
+    const parsed = vehicleDeleteInput.safeParse(await req.json());
     if (!parsed.success) return NextResponse.json({ error: "VALIDATION_ERROR", issues: parsed.error.flatten() }, { status: 422 });
-    const deleted = await deleteVehicle(parsed.data.id, { actorId: user.id, ip: requestIp(req) });
-    for (const objectKey of deleted.objectKeys) {
+    const ids = [...new Set(parsed.data.ids)];
+    const deleted = await deleteVehicles(ids, { actorId: user.id, ip: requestIp(req) });
+    const objectKeys = [...new Set(deleted.flatMap(item => item.objectKeys))];
+    for (const objectKey of objectKeys) {
       if (await prisma.attachment.count({ where: { objectKey } })) continue;
       try {
         await removeLocalUpload(objectKey);
@@ -89,7 +90,7 @@ export async function DELETE(req: NextRequest) {
         console.error("Failed to clean up deleted vehicle attachment", error);
       }
     }
-    return NextResponse.json({ data: { id: deleted.record.id }, audit: { action: "VEHICLE_DELETED", actor: user.name } });
+    return NextResponse.json({ data: { id: ids[0], ids }, audit: { action: "VEHICLE_DELETED", actor: user.name } });
   } catch (error) {
     return apiError(error);
   }
