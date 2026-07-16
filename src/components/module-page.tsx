@@ -5,6 +5,7 @@ import Image from "next/image";
 import QRCode from "qrcode";
 import { Download, FileSpreadsheet, Menu, Plus, Search, UploadCloud } from "lucide-react";
 import SideNav from "./side-nav";
+import VehicleFilterBar from "./vehicle-filter-bar";
 import VehicleFormModal from "./vehicle-form-modal";
 import VehicleTable from "./vehicle-table";
 import { can, inventoryDays, roleLabels, type BusinessType, type VehicleRecord } from "@/lib/domain";
@@ -12,6 +13,7 @@ import { useVehicleRecords } from "@/lib/use-vehicle-records";
 import { useSession } from "@/lib/use-session";
 import { CHINA_TIME_ZONE, chinaDateTime, localInputValue, zonedLocalToIso } from "@/lib/datetime";
 import { matchesPickupSearch, pickupTaskMatchesSearch, pickupVehicleSearchValues } from "@/lib/pickup-search";
+import { createVehicleFilters, filterVehicleRecords, vehicleExportUrl, type VehicleFilters } from "@/lib/vehicle-filters";
 
 type Kind = "vehicles" | "overseas" | "domestic" | "pickups" | "imports" | "reports" | "settings";
 const meta: Record<Kind, { eyebrow: string; title: string; description: string }> = {
@@ -26,15 +28,16 @@ const meta: Record<Kind, { eyebrow: string; title: string; description: string }
 
 export default function ModulePage({ kind }: { kind: Kind }) {
   const [mobile, setMobile] = useState(false);
-  const [q, setQ] = useState("");
+  const [filters, setFilters] = useState<VehicleFilters>(createVehicleFilters);
   const [modal, setModal] = useState(false);
   const { user } = useSession();
   const m = meta[kind];
   const type: BusinessType | undefined = kind === "overseas" ? "overseas" : kind === "domestic" ? "domestic" : undefined;
   const { records, saveRecord, removeRecord, loadError } = useVehicleRecords();
-  const rows = useMemo(() => records.filter(vehicle =>
-    (!type || vehicle.type === type) && [vehicle.vin, vehicle.model, vehicle.referenceNo, vehicle.customer, vehicle.warehouse, vehicle.inboundBoeNo, vehicle.outboundBoeNo, vehicle.outboundBoeTitle].filter(Boolean).join("").toLowerCase().includes(q.toLowerCase()),
-  ), [records, q, type]);
+  const scopedRecords = useMemo(() => type ? records.filter(vehicle => vehicle.type === type) : records, [records, type]);
+  const effectiveFilters = useMemo(() => type ? { ...filters, type } : filters, [filters, type]);
+  const rows = useMemo(() => filterVehicleRecords(scopedRecords, effectiveFilters), [effectiveFilters, scopedRecords]);
+  const exportHref = vehicleExportUrl(effectiveFilters);
   const recordModule = ["vehicles", "overseas", "domestic"].includes(kind);
   const role = user?.role ?? "customer";
 
@@ -45,17 +48,17 @@ export default function ModulePage({ kind }: { kind: Kind }) {
         <button className="menu" onClick={() => setMobile(true)} aria-label="打开菜单"><Menu /></button>
         <div><p>{m.eyebrow}</p><h1>{m.title}</h1></div>
         <div className="top-actions">
-          {["vehicles", "overseas", "domestic", "reports"].includes(kind) && can(role, "export") && <a href="/api/v1/export" className="secondary-button"><Download />导出</a>}
+          {["vehicles", "overseas", "domestic", "reports"].includes(kind) && can(role, "export") && <a href={exportHref} className="secondary-button"><Download />导出筛选结果（{rows.length}）</a>}
           {recordModule && can(role, "create") && <button className="primary-button" onClick={() => setModal(true)}><Plus />新增记录</button>}
         </div>
       </header>
       <section className="content">
         <div className="module-heading"><div><p className="eyebrow">{m.eyebrow}</p><h2>{m.title}</h2><p>{m.description}</p></div></div>
         {recordModule && loadError && <p className="form-error">{loadError}</p>}
-        {recordModule && <VehicleModule rows={rows} q={q} setQ={setQ} canDelete={can(role, "delete")} onDeleted={removeRecord} />}
+        {recordModule && <VehicleModule records={scopedRecords} rows={rows} filters={filters} setFilters={setFilters} lockedType={type} canDelete={can(role, "delete")} onDeleted={removeRecord} />}
         {kind === "pickups" && <PickupModule records={records} canCreate={can(role, "create")} />}
         {kind === "imports" && <ImportModule />}
-        {kind === "reports" && <ReportModule records={records} />}
+        {kind === "reports" && <><article className="panel report-filter-panel"><VehicleFilterBar records={records} filters={filters} onChange={setFilters}/></article><ReportModule records={rows} /></>}
         {kind === "settings" && <SettingsModule />}
       </section>
     </main>
@@ -63,9 +66,9 @@ export default function ModulePage({ kind }: { kind: Kind }) {
   </div>;
 }
 
-function VehicleModule({ rows, q, setQ, canDelete, onDeleted }: { rows: VehicleRecord[]; q: string; setQ: (value: string) => void; canDelete: boolean; onDeleted: (id: string) => void }) {
+function VehicleModule({ records, rows, filters, setFilters, lockedType, canDelete, onDeleted }: { records: VehicleRecord[]; rows: VehicleRecord[]; filters: VehicleFilters; setFilters: (filters: VehicleFilters) => void; lockedType?: BusinessType; canDelete: boolean; onDeleted: (id: string) => void }) {
   return <article className="panel table-panel module-panel">
-    <div className="filters"><label className="search"><Search /><input value={q} onChange={event => setQ(event.target.value)} placeholder="搜索车架号、车型、提单 / PO、客户…" /></label><span className="result-count">共 {rows.length} 辆</span></div>
+    <VehicleFilterBar records={records} filters={filters} onChange={setFilters} lockedType={lockedType}/>
     <VehicleTable rows={rows} storageKey="cargo.module-vehicle-table" canDelete={canDelete} onDeleted={onDeleted} />
   </article>;
 }
