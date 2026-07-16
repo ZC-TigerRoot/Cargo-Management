@@ -55,4 +55,12 @@ docker volume create cargo_uploads
 docker run --env-file .env -e UPLOAD_DIR=/app/data/uploads -v cargo_uploads:/app/data/uploads -p 3000:3000 cargo-management
 ```
 
-部署前必须执行 `pnpm db:deploy` 和 `pnpm db:seed`，并确保数据库连接和管理员密码使用生产值。生产环境还必须把 `UPLOAD_DIR` 指向持久化、可写且会备份的目录；多实例部署时应挂载同一共享文件系统。管理员可在“基础设置”中配置生成提货二维码使用的当前域名；未配置时依次使用 `APP_URL` 和当前请求域名。
+部署前必须执行 `pnpm db:deploy` 和 `pnpm db:seed`，并确保数据库连接和管理员密码使用生产值。生产环境必须把 `APP_URL` 设置为用户实际访问的 HTTPS origin（例如 `https://cargo.example.com`，不要添加路径），并把 `UPLOAD_DIR` 指向持久化、可写且会备份的目录；多实例部署时应挂载同一共享文件系统。管理员可在“基础设置”中配置生成提货二维码使用的当前域名；未配置时依次使用 `APP_URL` 和当前请求域名。
+
+使用 Nginx 反向代理时，应把公开请求信息传给应用：
+
+```nginx
+proxy_set_header Host $host;
+proxy_set_header X-Forwarded-Host $host;
+proxy_set_header X-Forwarded-Proto $scheme;
+```

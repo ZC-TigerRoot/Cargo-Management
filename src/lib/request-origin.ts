@@ -15,14 +15,42 @@ function normalizedOrigin(value: string) {
   }
 }
 
-export function isSameOriginRequest(req: OriginRequest) {
+function requestOriginCandidates(req: OriginRequest, configuredOrigin?: string) {
+  const hosts = [
+    firstHeaderValue(req.headers.get("x-forwarded-host")),
+    req.headers.get("host")?.trim() || undefined,
+  ];
+  const protocols = [
+    firstHeaderValue(req.headers.get("x-forwarded-proto")),
+    req.nextUrl.protocol,
+  ];
+  const origins = new Set<string>();
+
+  if (configuredOrigin) {
+    const origin = normalizedOrigin(configuredOrigin);
+    if (origin) origins.add(origin);
+  }
+  for (const host of hosts) {
+    for (const protocol of protocols) {
+      if (!host || !protocol) continue;
+      const origin = normalizedOrigin(`${protocol.replace(/:$/, "")}://${host}`);
+      if (origin) origins.add(origin);
+    }
+  }
+  return origins;
+}
+
+export function isSameOriginRequest(req: OriginRequest, configuredOrigin = process.env.APP_URL) {
   const originHeader = req.headers.get("origin");
   if (!originHeader) return true;
 
-  const host = firstHeaderValue(req.headers.get("x-forwarded-host")) ?? req.headers.get("host")?.trim();
-  const protocol = firstHeaderValue(req.headers.get("x-forwarded-proto")) ?? req.nextUrl.protocol;
-  if (!host || !protocol) return false;
+  const origin = normalizedOrigin(originHeader);
+  if (!origin) return false;
 
-  const requestOrigin = normalizedOrigin(`${protocol.replace(/:$/, "")}://${host}`);
-  return requestOrigin !== undefined && normalizedOrigin(originHeader) === requestOrigin;
+  if (requestOriginCandidates(req, configuredOrigin).has(origin)) return true;
+
+  // Reverse proxies sometimes replace Host/protocol without forwarding the
+  // public values. Browsers still provide this forbidden request header for a
+  // relative same-origin fetch, while a cross-site form/fetch cannot set it.
+  return req.headers.get("sec-fetch-site")?.trim().toLowerCase() === "same-origin";
 }

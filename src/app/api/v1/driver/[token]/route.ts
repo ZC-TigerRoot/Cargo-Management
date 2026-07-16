@@ -4,6 +4,7 @@ import { driverSubmission } from "@/lib/validators";
 import { prisma } from "@/lib/prisma";
 import { requestIp } from "@/lib/auth";
 import { MAX_DRIVER_PHOTO_BYTES, removeLocalUpload, storeDriverPhoto, type StoredUpload } from "@/lib/local-upload";
+import { isSameOriginRequest } from "@/lib/request-origin";
 
 export const runtime = "nodejs";
 
@@ -55,8 +56,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
   let storedUpload: StoredUpload | undefined;
   let uploadCommitted = false;
   try {
-    const origin = req.headers.get("origin");
-    if (origin && origin !== req.nextUrl.origin) return NextResponse.json({ error: "INVALID_ORIGIN", message: "请求来源无效" }, { status: 403 });
+    if (!isSameOriginRequest(req)) return NextResponse.json({ error: "INVALID_ORIGIN", message: "请求来源无效" }, { status: 403 });
     if (!req.headers.get("content-type")?.toLowerCase().startsWith("multipart/form-data")) {
       return NextResponse.json({ error: "INVALID_CONTENT_TYPE", message: "请使用表单上传车辆照片" }, { status: 415 });
     }

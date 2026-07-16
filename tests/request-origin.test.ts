@@ -32,6 +32,32 @@ describe("写请求同源校验", () => {
     expect(isSameOriginRequest(req)).toBe(true);
   });
 
+  it("接受 APP_URL 中配置的生产来源", () => {
+    const req = request("http://localhost:3000/api/v1/auth/login", {
+      host: "127.0.0.1:3000",
+      origin: "https://cargo.example.com",
+    });
+    expect(isSameOriginRequest(req, "https://cargo.example.com")).toBe(true);
+  });
+
+  it("接受浏览器确认的同源请求，即使代理未保留公开 Host", () => {
+    const req = request("http://localhost:3000/api/v1/auth/login", {
+      host: "127.0.0.1:3000",
+      origin: "https://cargo.example.com",
+      "sec-fetch-site": "same-origin",
+    });
+    expect(isSameOriginRequest(req, undefined)).toBe(true);
+  });
+
+  it("代理信息不匹配时仍拒绝浏览器跨站请求", () => {
+    const req = request("http://localhost:3000/api/v1/auth/login", {
+      host: "127.0.0.1:3000",
+      origin: "https://evil.example.com",
+      "sec-fetch-site": "cross-site",
+    });
+    expect(isSameOriginRequest(req, "https://cargo.example.com")).toBe(false);
+  });
+
   it("拒绝不同主机或协议的来源", () => {
     const wrongHost = request("http://localhost:3000/api/v1/auth/login", {
       host: "192.168.0.123:3000",
