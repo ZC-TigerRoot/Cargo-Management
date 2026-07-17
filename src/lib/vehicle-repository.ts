@@ -200,7 +200,9 @@ async function upsertRelations(tx: Prisma.TransactionClient, data: VehiclePayloa
     data.warehouse && data.warehouseLocation ? tx.warehouse.upsert({
       where: { name_location: { name: data.warehouse, location: data.warehouseLocation } },
       create: { name: data.warehouse, location: data.warehouseLocation, bonded: data.type === "overseas" },
-      update: { bonded: data.type === "overseas" },
+      // Bonded status belongs to the warehouse master record. Associating a
+      // vehicle from another business type must not silently rewrite it.
+      update: {},
     }) : null,
   ]);
 

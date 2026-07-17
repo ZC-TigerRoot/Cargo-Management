@@ -1,0 +1,202 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const prisma = vi.hoisted(() => ({
+  $transaction: vi.fn(),
+  vehicle: { findMany: vi.fn() },
+  auditLog: { findMany: vi.fn() },
+}));
+
+vi.mock("../src/lib/prisma", () => ({ prisma }));
+
+import {
+  createVehicle,
+  listVehicleAuditTrail,
+  listVehicles,
+  toVehicleRecord,
+  updateVehicle,
+  VersionConflictError,
+  type VehiclePayload,
+  type VehicleUpdatePayload,
+  type VehicleWithRelations,
+} from "../src/lib/vehicle-repository";
+
+function vehicle(overrides: Record<string, unknown> = {}): VehicleWithRelations {
+  return {
+    id: "vehicle-1",
+    version: 1,
+    vin: "VIN-001",
+    model: "测试车型",
+    brand: null,
+    hsCode: null,
+    status: "IN_STOCK",
+    inboundAt: null,
+    inboundAmount: null,
+    inboundBoeNo: null,
+    outboundAt: null,
+    outboundBoeNo: null,
+    outboundBoeTitle: null,
+    outboundAmount: null,
+    pickupDetails: null,
+    notes: null,
+    extra: { businessType: "domestic", referenceNo: "PO-EXTRA", warehouse: "备用仓库", warehouseLocation: "上海" },
+    batchId: null,
+    customerId: null,
+    warehouseId: null,
+    createdAt: new Date("2026-07-01T00:00:00.000Z"),
+    updatedAt: new Date("2026-07-02T00:00:00.000Z"),
+    batch: null,
+    customer: null,
+    warehouse: null,
+    events: [],
+    ...overrides,
+  } as unknown as VehicleWithRelations;
+}
+
+const minimalPayload = {
+  type: "domestic",
+  warehouseTimezone: "Asia/Shanghai",
+} as VehiclePayload;
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+
+describe("车辆仓储映射与并发保护", () => {
+  it("从关系和 extra 回退字段生成领域记录及附件时间线", () => {
+    const record = toVehicleRecord(vehicle({
+      status: "COMPLETED",
+      batch: { type: "DOMESTIC", referenceNo: "PO-RELATION", portOfLoad: null, portOfDischarge: null, vesselVoyage: null, etd: null, eta: null, manufacturer: null },
+      customer: { name: "测试客户" },
+      warehouse: { name: "关系仓库", location: "宁波" },
+      events: [
+        {
+          id: "event-1", type: "DRIVER_SIGNED", occurredAt: new Date("2026-07-03T01:00:00.000Z"), createdAt: new Date("2026-07-03T01:01:00.000Z"),
+          actor: { name: "仓管员" }, correctionOfId: null,
+          payload: { driverName: "张师傅", driverPhone: "13800138000" },
+          attachments: [{ id: "attachment/1", fileName: "photo.jpg", mimeType: "image/jpeg", size: 123 }],
+        },
+      ],
+    }));
+
+    expect(record).toMatchObject({ type: "domestic", referenceNo: "PO-RELATION", customer: "测试客户", warehouse: "关系仓库", status: "已完成" });
+    expect(record.history?.[0]).toMatchObject({
+      title: "司机完成签收",
+      actor: "仓管员",
+      details: [{ label: "姓名", value: "张师傅" }, { label: "联系电话", value: "13800138000" }],
+      attachments: [{ url: "/api/v1/attachments/attachment%2F1" }],
+    });
+  });
+
+  it("清空业务日期后隐藏旧事件并保留撤销历史", () => {
+    const record = toVehicleRecord(vehicle({
+      events: [
+        { id: "release", type: "MERCHANT_RELEASE", occurredAt: new Date("2026-07-03T00:00:00.000Z"), createdAt: new Date("2026-07-03T00:00:00.000Z"), actor: null, correctionOfId: null, payload: {}, attachments: [] },
+        { id: "clear", type: "CORRECTION", occurredAt: new Date("2026-07-04T00:00:00.000Z"), createdAt: new Date("2026-07-04T00:00:00.000Z"), actor: null, correctionOfId: "release", payload: { field: "merchantReleaseAt", eventType: "MERCHANT_RELEASE", value: null }, attachments: [] },
+      ],
+    }));
+
+    expect(record.merchantReleaseAt).toBeUndefined();
+    expect(record.history?.[1]).toMatchObject({ title: "撤销：商社通知放车", reason: "清空错误的业务时间" });
+  });
+
+  it("把查询词和数据范围一起传入 Prisma", async () => {
+    prisma.vehicle.findMany.mockResolvedValueOnce([]);
+    await listVehicles({ q: "VIN-001", scope: { customerId: "customer-1" } });
+
+    expect(prisma.vehicle.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        customerId: "customer-1",
+        OR: expect.arrayContaining([{ vin: { contains: "VIN-001", mode: "insensitive" } }]),
+      }),
+      orderBy: { updatedAt: "desc" },
+    }));
+  });
+
+  it("将审计快照转换成可读字段变更", async () => {
+    prisma.auditLog.findMany.mockResolvedValueOnce([{ id: "audit-1", action: "VEHICLE_UPDATED", actor: { name: "管理员" }, actorLabel: null, createdAt: new Date("2026-07-04T00:00:00.000Z"), before: { vin: "OLD", notes: null, history: [] }, after: { vin: "NEW", notes: "已检查", history: ["ignored"] } }]);
+
+    await expect(listVehicleAuditTrail("vehicle-1")).resolves.toEqual([expect.objectContaining({
+      actor: "管理员",
+      action: "修改车辆数据",
+      changes: [
+        { field: "vin", label: "车架号", before: "OLD", after: "NEW" },
+        { field: "notes", label: "备注", before: undefined, after: "已检查" },
+      ],
+    })]);
+  });
+
+  it("重复创建请求直接返回已有车辆", async () => {
+    const existing = vehicle();
+    const tx = { inventoryEvent: { findUnique: vi.fn().mockResolvedValue({ vehicle: existing }) } };
+    prisma.$transaction.mockImplementationOnce(async (callback: (client: typeof tx) => unknown) => callback(tx));
+
+    await expect(createVehicle(minimalPayload, "request-001")).resolves.toBe(existing);
+  });
+
+  it("新建车辆会写入创建事件和审计", async () => {
+    const created = vehicle();
+    const tx = {
+      inventoryEvent: { findUnique: vi.fn().mockResolvedValue(null), create: vi.fn().mockResolvedValue({}), createMany: vi.fn() },
+      vehicle: { create: vi.fn().mockResolvedValue({ id: "vehicle-1" }), findUniqueOrThrow: vi.fn().mockResolvedValue(created) },
+      auditLog: { create: vi.fn().mockResolvedValue({}) },
+    };
+    prisma.$transaction.mockImplementationOnce(async (callback: (client: typeof tx) => unknown) => callback(tx));
+
+    await expect(createVehicle(minimalPayload, "request-002", { actorId: "user-1", ip: "203.0.113.8" })).resolves.toBe(created);
+    expect(tx.inventoryEvent.create).toHaveBeenCalledWith({ data: expect.objectContaining({ vehicleId: "vehicle-1", type: "CREATED", idempotencyKey: "request-002", actorId: "user-1" }) });
+    expect(tx.auditLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ action: "VEHICLE_CREATED", entityId: "vehicle-1", ip: "203.0.113.8" }) });
+  });
+
+  it("关联不同业务类型的车辆时不改写既有仓库的保税属性", async () => {
+    const created = vehicle();
+    const existingWarehouse = { id: "warehouse-1", name: "MAXX", location: "迪拜", bonded: true };
+    const tx = {
+      inventoryEvent: { findUnique: vi.fn().mockResolvedValue(null), create: vi.fn().mockResolvedValue({}), createMany: vi.fn() },
+      warehouse: {
+        findUnique: vi.fn().mockResolvedValue(existingWarehouse),
+        upsert: vi.fn().mockResolvedValue(existingWarehouse),
+      },
+      vehicle: { create: vi.fn().mockResolvedValue({ id: "vehicle-1" }), findUniqueOrThrow: vi.fn().mockResolvedValue(created) },
+      auditLog: { create: vi.fn().mockResolvedValue({}) },
+    };
+    prisma.$transaction.mockImplementationOnce(async (callback: (client: typeof tx) => unknown) => callback(tx));
+
+    await createVehicle({
+      ...minimalPayload,
+      warehouse: "MAXX",
+      warehouseLocation: "迪拜",
+    }, "request-warehouse-master");
+
+    expect(tx.warehouse.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({ bonded: false }),
+      update: {},
+    }));
+    expect(tx.auditLog.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("版本不匹配时拒绝更新且不写数据", async () => {
+    const tx = { vehicle: { findUniqueOrThrow: vi.fn().mockResolvedValue(vehicle({ version: 2 })) } };
+    prisma.$transaction.mockImplementationOnce(async (callback: (client: typeof tx) => unknown) => callback(tx));
+
+    await expect(updateVehicle("vehicle-1", 1, minimalPayload as VehicleUpdatePayload)).rejects.toBeInstanceOf(VersionConflictError);
+  });
+
+  it("状态变更使用乐观锁并记录异常事件", async () => {
+    const existing = vehicle({ version: 1, status: "IN_STOCK" });
+    const updated = vehicle({ version: 2, status: "EXCEPTION" });
+    const tx = {
+      vehicle: {
+        findUniqueOrThrow: vi.fn().mockResolvedValueOnce(existing).mockResolvedValueOnce(updated),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      },
+      inventoryEvent: { create: vi.fn().mockResolvedValue({}) },
+      auditLog: { create: vi.fn().mockResolvedValue({}) },
+    };
+    prisma.$transaction.mockImplementationOnce(async (callback: (client: typeof tx) => unknown) => callback(tx));
+
+    const data = { ...minimalPayload, status: "异常", statusReason: "发现车身划痕" } as VehicleUpdatePayload;
+    await expect(updateVehicle("vehicle-1", 1, data, { actorId: "user-1" })).resolves.toBe(updated);
+    expect(tx.vehicle.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "vehicle-1", version: 1 }, data: expect.objectContaining({ status: "EXCEPTION", version: { increment: 1 } }) }));
+    expect(tx.inventoryEvent.create).toHaveBeenCalledWith({ data: expect.objectContaining({ type: "EXCEPTION", payload: expect.objectContaining({ from: "在库", to: "异常", reason: "发现车身划痕" }) }) });
+  });
+});
