@@ -1,7 +1,9 @@
-import { EventType, VehicleStatus as PrismaVehicleStatus, type Prisma } from "@prisma/client";
-import type { VehicleAuditRecord, VehicleEventRecord, VehicleRecord, VehicleStatus as DomainVehicleStatus } from "./domain";
+import type { EventType, Prisma, VehicleStatus as PrismaVehicleStatus } from "@prisma/client";
+import type { VehicleAuditRecord, VehicleEventRecord, VehicleRecord } from "./domain";
 import { CHINA_TIME_ZONE } from "./datetime";
 import { prisma } from "./prisma";
+import { vehicleScalarData } from "./vehicle-persistence";
+import { vehicleStatusCodes, vehicleStatusNames } from "./vehicle-status";
 import type { z } from "zod";
 import type { vehiclePayload, vehicleUpdateInput } from "./validators";
 
@@ -55,28 +57,6 @@ const eventTitles: Record<EventType, string> = {
   AGENT_RECEIPT_DELIVERED: "外代交付签收单给商社",
   CORRECTION: "资料更正",
   EXCEPTION: "标记异常",
-};
-
-const statusNames: Record<PrismaVehicleStatus, DomainVehicleStatus> = {
-  PENDING_INBOUND: "待入库",
-  IN_STOCK: "在库",
-  PENDING_RELEASE: "待放车",
-  PENDING_PICKUP: "待提货",
-  OUTBOUND: "已出库",
-  PENDING_RECEIPT: "待签收",
-  COMPLETED: "已完成",
-  EXCEPTION: "异常",
-};
-
-const statusCodes: Record<DomainVehicleStatus, PrismaVehicleStatus> = {
-  "待入库": "PENDING_INBOUND",
-  "在库": "IN_STOCK",
-  "待放车": "PENDING_RELEASE",
-  "待提货": "PENDING_PICKUP",
-  "已出库": "OUTBOUND",
-  "待签收": "PENDING_RECEIPT",
-  "已完成": "COMPLETED",
-  "异常": "EXCEPTION",
 };
 
 function jsonObject(value: Prisma.JsonValue | undefined) {
@@ -155,7 +135,7 @@ export function toVehicleRecord(vehicle: VehicleWithRelations): VehicleRecord {
     warehouse: vehicle.warehouse?.name ?? extraText(vehicle.extra, "warehouse"),
     warehouseTimezone: CHINA_TIME_ZONE,
     customer: vehicle.customer?.name ?? undefined,
-    status: statusNames[vehicle.status] ?? "待入库",
+    status: vehicleStatusNames[vehicle.status],
     inboundAt: vehicle.inboundAt?.toISOString(),
     inboundAmount: vehicle.inboundAmount?.toFixed(2),
     inboundBoeNo: vehicle.inboundBoeNo ?? undefined,
@@ -298,20 +278,8 @@ export async function createVehicle(data: VehiclePayload, idempotencyKey: string
     const { batch, customer, warehouse } = await upsertRelations(tx, data, context);
     const vehicle = await tx.vehicle.create({
       data: {
-        vin: data.vin,
-        model: data.model,
-        brand: data.brand,
-        hsCode: data.hsCode,
+        ...vehicleScalarData(data),
         status: prismaStatus(data),
-        inboundAt: data.inboundAt ? new Date(data.inboundAt) : undefined,
-        inboundAmount: data.inboundAmount,
-        inboundBoeNo: data.inboundBoeNo,
-        outboundAt: data.outboundAt ? new Date(data.outboundAt) : undefined,
-        outboundBoeNo: data.outboundBoeNo,
-        outboundBoeTitle: data.outboundBoeTitle,
-        outboundAmount: data.outboundAmount,
-        pickupDetails: data.pickupDetails,
-        notes: data.notes,
         extra: vehicleExtra(data),
         batchId: batch?.id,
         customerId: customer?.id,
@@ -377,25 +345,13 @@ export async function updateVehicle(id: string, expectedVersion: number, data: V
     if (existing.version !== expectedVersion) throw new VersionConflictError();
     const before = toVehicleRecord(existing);
     const { batch, customer, warehouse } = await upsertRelations(tx, data, context);
-    const nextStatus = data.status ? statusCodes[data.status] : existing.status;
+    const nextStatus = data.status ? vehicleStatusCodes[data.status] : existing.status;
     const extra = vehicleExtra(data, existing.extra);
     const result = await tx.vehicle.updateMany({
       where: { id, version: expectedVersion },
       data: {
-        vin: data.vin,
-        model: data.model,
-        brand: data.brand ?? null,
-        hsCode: data.hsCode ?? null,
+        ...vehicleScalarData(data),
         status: nextStatus,
-        inboundAt: data.inboundAt ? new Date(data.inboundAt) : null,
-        inboundAmount: data.inboundAmount ?? null,
-        inboundBoeNo: data.inboundBoeNo ?? null,
-        outboundAt: data.outboundAt ? new Date(data.outboundAt) : null,
-        outboundBoeNo: data.outboundBoeNo ?? null,
-        outboundBoeTitle: data.outboundBoeTitle ?? null,
-        outboundAmount: data.outboundAmount ?? null,
-        pickupDetails: data.pickupDetails ?? null,
-        notes: data.notes ?? null,
         extra,
         batchId: batch?.id ?? null,
         customerId: customer?.id ?? null,
@@ -413,7 +369,7 @@ export async function updateVehicle(id: string, expectedVersion: number, data: V
           type: nextStatus === "EXCEPTION" ? "EXCEPTION" : "CORRECTION",
           occurredAt: new Date(),
           actorId: context.actorId,
-          payload: { source: "status-edit", field: "status", from: statusNames[existing.status], to: statusNames[nextStatus], reason: data.statusReason! },
+          payload: { source: "status-edit", field: "status", from: vehicleStatusNames[existing.status], to: vehicleStatusNames[nextStatus], reason: data.statusReason! },
         },
       });
     }

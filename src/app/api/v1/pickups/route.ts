@@ -1,20 +1,22 @@
 import { randomBytes } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
-import type { VehicleStatus } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { assertSameOrigin, AuthorizationError, pickupTaskScopeWhere, requestIp, requireUser, vehicleScopeWhere } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { buildPickupUrl, getPublicBaseUrl } from "@/lib/public-url";
+import { vehicleStatusNames } from "@/lib/vehicle-status";
 
 const pickupInput = z.object({
   vehicleIds: z.array(z.string().min(1)).min(1).max(50),
   expiresAt: z.iso.datetime(),
 });
 
-const statusLabels: Record<VehicleStatus, string> = {
-  PENDING_INBOUND: "待入库", IN_STOCK: "在库", PENDING_RELEASE: "待放车", PENDING_PICKUP: "待提货",
-  OUTBOUND: "已出库", PENDING_RECEIPT: "待签收", COMPLETED: "已完成", EXCEPTION: "异常",
-};
+class PickupCreationError extends Error {
+  constructor(public code: string, message: string, public status: 404 | 409) {
+    super(message);
+  }
+}
 
 function taskData(task: {
   id: string; taskNo: string; token: string; expiresAt: Date; revokedAt: Date | null; submittedAt: Date | null; createdAt: Date;
@@ -59,27 +61,47 @@ export async function POST(req: NextRequest) {
     const expiresAt = new Date(parsed.data.expiresAt);
     if (expiresAt <= new Date()) return NextResponse.json({ error: "INVALID_EXPIRY", message: "二维码有效期必须晚于当前时间" }, { status: 422 });
     const vehicleIds = [...new Set(parsed.data.vehicleIds)];
-    const vehicles = await prisma.vehicle.findMany({
+    const scopedVehicles = await prisma.vehicle.findMany({
       where: { id: { in: vehicleIds }, ...vehicleScopeWhere(user) },
-      select: { id: true, vin: true, model: true, status: true, version: true },
+      select: { id: true },
     });
-    if (vehicles.length !== vehicleIds.length) return NextResponse.json({ error: "VEHICLE_NOT_FOUND", message: "部分车辆不存在，请刷新后重试" }, { status: 404 });
-    const unavailable = vehicles.filter(vehicle => !["IN_STOCK", "PENDING_RELEASE", "PENDING_PICKUP"].includes(vehicle.status));
-    if (unavailable.length) return NextResponse.json({ error: "VEHICLE_NOT_AVAILABLE", message: `以下车辆当前不可提货：${unavailable.map(vehicle => vehicle.vin || vehicle.model || vehicle.id).join("、")}` }, { status: 409 });
-    const activeItems = await prisma.pickupItem.findMany({
-      where: { vehicleId: { in: vehicleIds }, pickupTask: { submittedAt: null, revokedAt: null, expiresAt: { gt: new Date() } } },
-      select: { vehicleId: true },
-    });
-    if (activeItems.length) {
-      const vins = vehicles.filter(vehicle => activeItems.some(item => item.vehicleId === vehicle.id)).map(vehicle => vehicle.vin || vehicle.model || vehicle.id);
-      return NextResponse.json({ error: "ACTIVE_TASK_EXISTS", message: `以下车辆已有有效提货任务：${vins.join("、")}。请在右侧任务卡片中查看二维码。` }, { status: 409 });
-    }
+    if (scopedVehicles.length !== vehicleIds.length) return NextResponse.json({ error: "VEHICLE_NOT_FOUND", message: "部分车辆不存在，请刷新后重试" }, { status: 404 });
 
     const token = randomBytes(24).toString("base64url");
     const publicBaseUrl = await getPublicBaseUrl(req.nextUrl.origin);
     const date = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date()).replaceAll("-", "");
     const taskNo = `PU-${date}-${randomBytes(3).toString("hex").toUpperCase()}`;
     const task = await prisma.$transaction(async tx => {
+      // Serialize task creation per vehicle so concurrent requests cannot both
+      // pass the active-task check and create duplicate pickup links.
+      await tx.$queryRaw(Prisma.sql`
+        SELECT "id"
+        FROM "Vehicle"
+        WHERE "id" IN (${Prisma.join(vehicleIds)})
+        ORDER BY "id"
+        FOR UPDATE
+      `);
+      const vehicles = await tx.vehicle.findMany({
+        where: { id: { in: vehicleIds }, ...vehicleScopeWhere(user) },
+        select: { id: true, vin: true, model: true, status: true, version: true },
+      });
+      if (vehicles.length !== vehicleIds.length) {
+        throw new PickupCreationError("VEHICLE_NOT_FOUND", "部分车辆不存在，请刷新后重试", 404);
+      }
+      const unavailable = vehicles.filter(vehicle => !["IN_STOCK", "PENDING_RELEASE", "PENDING_PICKUP"].includes(vehicle.status));
+      if (unavailable.length) {
+        const labels = unavailable.map(vehicle => vehicle.vin || vehicle.model || vehicle.id);
+        throw new PickupCreationError("VEHICLE_NOT_AVAILABLE", `以下车辆当前不可提货：${labels.join("、")}`, 409);
+      }
+      const activeItems = await tx.pickupItem.findMany({
+        where: { vehicleId: { in: vehicleIds }, pickupTask: { submittedAt: null, revokedAt: null, expiresAt: { gt: new Date() } } },
+        select: { vehicleId: true },
+      });
+      if (activeItems.length) {
+        const activeIds = new Set(activeItems.map(item => item.vehicleId));
+        const labels = vehicles.filter(vehicle => activeIds.has(vehicle.id)).map(vehicle => vehicle.vin || vehicle.model || vehicle.id);
+        throw new PickupCreationError("ACTIVE_TASK_EXISTS", `以下车辆已有有效提货任务：${labels.join("、")}。请在右侧任务卡片中查看二维码。`, 409);
+      }
       const created = await tx.pickupTask.create({
         data: {
           taskNo,
@@ -107,7 +129,7 @@ export async function POST(req: NextRequest) {
             action: "PICKUP_CREATED",
             entityType: "Vehicle",
             entityId: vehicle.id,
-            before: { status: statusLabels[vehicle.status], version: vehicle.version },
+            before: { status: vehicleStatusNames[vehicle.status], version: vehicle.version },
             after: { status: "待提货", version: vehicle.version + 1, taskNo },
             ip: requestIp(req),
           },
@@ -127,6 +149,7 @@ export async function POST(req: NextRequest) {
     });
     return NextResponse.json({ data: taskData(task, publicBaseUrl) }, { status: 201 });
   } catch (error) {
+    if (error instanceof PickupCreationError) return NextResponse.json({ error: error.code, message: error.message }, { status: error.status });
     if (error instanceof AuthorizationError) return NextResponse.json({ error: error.status === 401 ? "UNAUTHENTICATED" : "FORBIDDEN", message: error.message }, { status: error.status });
     if (error instanceof SyntaxError) return NextResponse.json({ error: "INVALID_JSON", message: "请求内容不是有效的 JSON" }, { status: 400 });
     console.error(error);

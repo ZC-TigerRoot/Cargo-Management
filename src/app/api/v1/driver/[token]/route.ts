@@ -1,18 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
-import type { Prisma, VehicleStatus } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 import { driverSubmission } from "@/lib/validators";
 import { prisma } from "@/lib/prisma";
 import { requestIp } from "@/lib/auth";
 import { MAX_DRIVER_PHOTO_BYTES, removeLocalUpload, storeDriverPhoto, type StoredUpload } from "@/lib/local-upload";
 import { isSameOriginRequest } from "@/lib/request-origin";
+import { vehicleStatusNames } from "@/lib/vehicle-status";
 
 export const runtime = "nodejs";
 
 const receiptNo = (taskNo: string) => taskNo.replace(/^PU-/, "RC-");
-const statusLabels: Record<VehicleStatus, string> = {
-  PENDING_INBOUND: "待入库", IN_STOCK: "在库", PENDING_RELEASE: "待放车", PENDING_PICKUP: "待提货",
-  OUTBOUND: "已出库", PENDING_RECEIPT: "待签收", COMPLETED: "已完成", EXCEPTION: "异常",
-};
 
 function jsonObject(value: Prisma.JsonValue | null) {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, Prisma.JsonValue> : {};
@@ -152,7 +149,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
             action: "PICKUP_SIGNED",
             entityType: "Vehicle",
             entityId: item.vehicle.id,
-            before: { status: statusLabels[item.vehicle.status], version: item.vehicle.version },
+            before: { status: vehicleStatusNames[item.vehicle.status], version: item.vehicle.version },
             after: { status: "已完成", version: item.vehicle.version + 1, taskNo: task!.taskNo, driverName: parsed.data.driverName, driverPhone: parsed.data.driverPhone },
             ip: requestIp(req),
           },
