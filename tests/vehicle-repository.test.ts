@@ -10,6 +10,7 @@ vi.mock("../src/lib/prisma", () => ({ prisma }));
 
 import {
   createVehicle,
+  deleteVehicles,
   listVehicleAuditTrail,
   listVehicles,
   toVehicleRecord,
@@ -198,5 +199,41 @@ describe("车辆仓储映射与并发保护", () => {
     await expect(updateVehicle("vehicle-1", 1, data, { actorId: "user-1" })).resolves.toBe(updated);
     expect(tx.vehicle.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "vehicle-1", version: 1 }, data: expect.objectContaining({ status: "EXCEPTION", version: { increment: 1 } }) }));
     expect(tx.inventoryEvent.create).toHaveBeenCalledWith({ data: expect.objectContaining({ type: "EXCEPTION", payload: expect.objectContaining({ from: "在库", to: "异常", reason: "发现车身划痕" }) }) });
+  });
+
+  it("批量删除使用集合操作并为每辆车保留审计记录", async () => {
+    const vehicles = [vehicle({ id: "vehicle-1" }), vehicle({ id: "vehicle-2", vin: "VIN-002" })];
+    const tx = {
+      vehicle: {
+        findMany: vi.fn().mockResolvedValue(vehicles),
+        findUniqueOrThrow: vi.fn(),
+        deleteMany: vi.fn().mockResolvedValue({ count: 2 }),
+      },
+      attachment: {
+        findMany: vi.fn().mockResolvedValue([
+          { objectKey: "vehicle-1/photo.jpg", vehicleId: "vehicle-1", inventoryEvent: null },
+          { objectKey: "vehicle-2/photo.jpg", vehicleId: null, inventoryEvent: { vehicleId: "vehicle-2" } },
+        ]),
+        deleteMany: vi.fn().mockResolvedValue({ count: 2 }),
+      },
+      pickupItem: {
+        findMany: vi.fn().mockResolvedValue([{ pickupTaskId: "pickup-1" }]),
+        deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
+      },
+      inventoryEvent: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
+      pickupTask: { deleteMany: vi.fn().mockResolvedValue({ count: 1 }) },
+      auditLog: { createMany: vi.fn().mockResolvedValue({ count: 2 }) },
+    };
+    prisma.$transaction.mockImplementationOnce(async (callback: (client: typeof tx) => unknown) => callback(tx));
+
+    await expect(deleteVehicles(["vehicle-1", "vehicle-2"], { actorId: "user-1" })).resolves.toEqual([
+      expect.objectContaining({ record: expect.objectContaining({ id: "vehicle-1" }), objectKeys: ["vehicle-1/photo.jpg"] }),
+      expect.objectContaining({ record: expect.objectContaining({ id: "vehicle-2" }), objectKeys: ["vehicle-2/photo.jpg"] }),
+    ]);
+    expect(tx.vehicle.deleteMany).toHaveBeenCalledTimes(1);
+    expect(tx.auditLog.createMany).toHaveBeenCalledWith({ data: expect.arrayContaining([
+      expect.objectContaining({ action: "VEHICLE_DELETED", entityId: "vehicle-1", actorId: "user-1" }),
+      expect.objectContaining({ action: "VEHICLE_DELETED", entityId: "vehicle-2", actorId: "user-1" }),
+    ]) });
   });
 });

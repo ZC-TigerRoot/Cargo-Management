@@ -82,5 +82,5 @@ export const driverSubmission = z.object({
 
 export const vehicleDeleteInput = z.union([
   z.object({ id: z.string().min(1) }).transform(({ id }) => ({ ids: [id] })),
-  z.object({ ids: z.array(z.string().min(1)).min(1, "请至少选择一条单据").max(100, "单次最多删除 100 条单据") }),
+  z.object({ ids: z.array(z.string().min(1)).min(1, "请至少选择一条单据") }),
 ]);

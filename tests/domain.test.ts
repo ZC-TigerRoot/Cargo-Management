@@ -64,6 +64,11 @@ describe("车辆删除校验", () => {
     expect(vehicleDeleteInput.parse({ ids: ["vehicle-001", "vehicle-002"] })).toEqual({ ids: ["vehicle-001", "vehicle-002"] });
     expect(vehicleDeleteInput.safeParse({ ids: [] }).success).toBe(false);
   });
+
+  it("批量删除数量不设上限", () => {
+    const ids = Array.from({ length: 715 }, (_, index) => `vehicle-${index + 1}`);
+    expect(vehicleDeleteInput.parse({ ids })).toEqual({ ids });
+  });
 });
 
 describe("提货二维码搜索", () => {

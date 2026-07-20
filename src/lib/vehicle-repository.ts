@@ -392,44 +392,69 @@ export async function updateVehicle(id: string, expectedVersion: number, data: V
   });
 }
 
-async function deleteVehicleInTransaction(tx: Prisma.TransactionClient, id: string, context: MutationContext) {
-  const existing = await tx.vehicle.findUniqueOrThrow({ where: { id }, include: vehicleInclude });
+async function deleteVehiclesInTransaction(tx: Prisma.TransactionClient, ids: string[], context: MutationContext) {
+  const uniqueIds = [...new Set(ids)];
+  if (!uniqueIds.length) return [];
+
+  const existing = await tx.vehicle.findMany({
+    where: { id: { in: uniqueIds } },
+    include: vehicleInclude,
+  });
+  if (existing.length !== uniqueIds.length) {
+    const existingIds = new Set(existing.map(vehicle => vehicle.id));
+    const missingId = uniqueIds.find(id => !existingIds.has(id))!;
+    await tx.vehicle.findUniqueOrThrow({ where: { id: missingId } });
+  }
+
   const [attachments, pickupItems] = await Promise.all([
     tx.attachment.findMany({
-      where: { OR: [{ vehicleId: id }, { inventoryEvent: { vehicleId: id } }] },
-      select: { objectKey: true },
+      where: { OR: [{ vehicleId: { in: uniqueIds } }, { inventoryEvent: { vehicleId: { in: uniqueIds } } }] },
+      select: { objectKey: true, vehicleId: true, inventoryEvent: { select: { vehicleId: true } } },
     }),
-    tx.pickupItem.findMany({ where: { vehicleId: id }, select: { pickupTaskId: true } }),
+    tx.pickupItem.findMany({ where: { vehicleId: { in: uniqueIds } }, select: { pickupTaskId: true } }),
   ]);
-  await tx.attachment.deleteMany({ where: { OR: [{ vehicleId: id }, { inventoryEvent: { vehicleId: id } }] } });
-  await tx.pickupItem.deleteMany({ where: { vehicleId: id } });
-  await tx.inventoryEvent.deleteMany({ where: { vehicleId: id } });
-  await tx.vehicle.delete({ where: { id } });
+
+  await tx.attachment.deleteMany({
+    where: { OR: [{ vehicleId: { in: uniqueIds } }, { inventoryEvent: { vehicleId: { in: uniqueIds } } }] },
+  });
+  await tx.pickupItem.deleteMany({ where: { vehicleId: { in: uniqueIds } } });
+  await tx.inventoryEvent.deleteMany({ where: { vehicleId: { in: uniqueIds } } });
+  await tx.vehicle.deleteMany({ where: { id: { in: uniqueIds } } });
+
   const taskIds = [...new Set(pickupItems.map(item => item.pickupTaskId))];
   if (taskIds.length) await tx.pickupTask.deleteMany({ where: { id: { in: taskIds }, items: { none: {} } } });
-  await tx.auditLog.create({
-    data: {
+
+  await tx.auditLog.createMany({
+    data: existing.map(vehicle => ({
       actorId: context.actorId,
       action: "VEHICLE_DELETED",
       entityType: "Vehicle",
-      entityId: id,
-      before: auditSnapshot(toVehicleRecord(existing)),
+      entityId: vehicle.id,
+      before: auditSnapshot(toVehicleRecord(vehicle)),
       ip: context.ip,
-    },
+    })),
   });
-  return { record: toVehicleRecord(existing), objectKeys: [...new Set(attachments.map(item => item.objectKey))] };
+
+  const objectKeysByVehicle = new Map<string, Set<string>>();
+  for (const attachment of attachments) {
+    const vehicleId = attachment.vehicleId ?? attachment.inventoryEvent?.vehicleId;
+    if (!vehicleId) continue;
+    const objectKeys = objectKeysByVehicle.get(vehicleId) ?? new Set<string>();
+    objectKeys.add(attachment.objectKey);
+    objectKeysByVehicle.set(vehicleId, objectKeys);
+  }
+  return existing.map(vehicle => ({
+    record: toVehicleRecord(vehicle),
+    objectKeys: [...(objectKeysByVehicle.get(vehicle.id) ?? [])],
+  }));
 }
 
 export async function deleteVehicle(id: string, context: MutationContext = {}) {
-  return prisma.$transaction(tx => deleteVehicleInTransaction(tx, id, context));
+  return prisma.$transaction(async tx => (await deleteVehiclesInTransaction(tx, [id], context))[0]);
 }
 
 export async function deleteVehicles(ids: string[], context: MutationContext = {}) {
-  return prisma.$transaction(async tx => {
-    const deleted = [];
-    for (const id of ids) deleted.push(await deleteVehicleInTransaction(tx, id, context));
-    return deleted;
-  });
+  return prisma.$transaction(tx => deleteVehiclesInTransaction(tx, ids, context));
 }
 
 export async function listVehicles({ id, q, scope }: { id?: string; q?: string; scope?: Prisma.VehicleWhereInput } = {}) {
