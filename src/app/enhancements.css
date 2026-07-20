@@ -44,6 +44,15 @@
 .column-picker-item.drop-before { box-shadow: inset 0 2px var(--green); }
 .column-picker-item.drop-after { box-shadow: inset 0 -2px var(--green); }
 .column-picker .reset-columns { width: 100%; margin-top: 8px; min-height: 32px; border: 0; border-radius: 7px; background: #edf4f0; color: var(--green); font-size: 11px; font-weight: 700; }
+.table-pagination { min-height: 54px; display: flex; align-items: center; justify-content: flex-end; gap: 18px; padding: 9px 20px; border-top: 1px solid var(--line); color: var(--muted); font-size: 10px; }
+.table-pagination>span { margin-right: auto; }
+.table-pagination label,.table-pagination>div { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.table-pagination select { height: 30px; padding: 0 24px 0 8px; border: 1px solid var(--line); border-radius: 7px; background: #fff; color: var(--ink); font-size: 10px; }
+.table-pagination button { width: 30px; height: 30px; display: grid; place-items: center; padding: 0; border: 1px solid var(--line); border-radius: 7px; background: #fff; color: var(--green); cursor: pointer; }
+.table-pagination button:hover:not(:disabled) { border-color: #82a596; background: #f2f7f4; }
+.table-pagination button:disabled { color: #aab2ae; background: #f6f7f5; cursor: not-allowed; }
+.table-pagination button svg { width: 14px; height: 14px; }
+.table-pagination b { color: var(--ink); }
 .audit-timezone { margin: -14px 0 16px; color: var(--muted); font-size: 10px; }
 .audit-list { display: grid; gap: 12px; }
 .audit-list article { border: 1px solid var(--line); border-radius: 9px; padding: 12px; }
@@ -109,6 +118,8 @@
   .settings-domain-card { grid-column: span 1; }
   .settings-form { grid-template-columns: 1fr; }
   .column-toolbar { justify-content: flex-start; flex-wrap: wrap; padding: 0 12px 12px; }
+  .table-pagination { justify-content: space-between; gap: 10px; padding: 10px 12px; flex-wrap: wrap; }
+  .table-pagination>span { width: 100%; margin-right: 0; }
   .column-picker { position: fixed; inset: 90px 14px auto; width: auto; max-height: calc(100vh - 120px); }
   .vehicle-filter-bar { padding: 0 12px 12px; }
   .vehicle-filter-primary { align-items: stretch; }

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from "react";
 import Link from "next/link";
-import { ArrowDown, ArrowUp, ArrowUpDown, GripVertical, SlidersHorizontal, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, GripVertical, SlidersHorizontal, Trash2 } from "lucide-react";
 import { inventoryDays, type VehicleRecord } from "@/lib/domain";
 import { chinaDateTime } from "@/lib/datetime";
 
@@ -37,8 +37,10 @@ const columns: Column[] = [
 const defaultOrder = ["vehicle", "business", "warehouse", "customer", "inventoryDays", "status", ...columns.map(column => column.id).filter(id => !["vehicle", "business", "warehouse", "customer", "inventoryDays", "status"].includes(id))];
 const defaultVisible = ["vehicle", "business", "warehouse", "customer", "inventoryDays", "status"];
 const columnById = new Map(columns.map(column => [column.id, column]));
+const pageSizeOptions = [10, 20, 50, 100] as const;
+const defaultPageSize = pageSizeOptions[0];
 
-type Preferences = { order: string[]; visible: string[]; sort: string; direction: "asc" | "desc" };
+type Preferences = { order: string[]; visible: string[]; sort: string; direction: "asc" | "desc"; pageSize?: number };
 
 function validPreferences(value: unknown): value is Preferences {
   if (!value || typeof value !== "object") return false;
@@ -52,6 +54,8 @@ export default function VehicleTable({ rows, storageKey = "cargo.vehicle-table",
   const [visible, setVisible] = useState(defaultVisible);
   const [sort, setSort] = useState("updatedAt");
   const [direction, setDirection] = useState<"asc" | "desc">("desc");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<number>(defaultPageSize);
   const [ready, setReady] = useState(false);
   const [draggingId, setDraggingId] = useState("");
   const [dropTarget, setDropTarget] = useState<{ id: string; edge: "before" | "after" }>();
@@ -72,6 +76,7 @@ export default function VehicleTable({ rows, storageKey = "cargo.vehicle-table",
         if (selected.length) setVisible(selected);
         if (columnById.has(stored.sort)) setSort(stored.sort);
         setDirection(stored.direction);
+        if (pageSizeOptions.some(option => option === stored.pageSize)) setPageSize(stored.pageSize!);
       }
     } catch {
       // Ignore a malformed browser preference and use the safe defaults.
@@ -83,8 +88,8 @@ export default function VehicleTable({ rows, storageKey = "cargo.vehicle-table",
 
   useEffect(() => {
     if (!ready) return;
-    localStorage.setItem(storageKey, JSON.stringify({ order, visible, sort, direction } satisfies Preferences));
-  }, [direction, order, ready, sort, storageKey, visible]);
+    localStorage.setItem(storageKey, JSON.stringify({ order, visible, sort, direction, pageSize } satisfies Preferences));
+  }, [direction, order, pageSize, ready, sort, storageKey, visible]);
 
   const visibleColumns = order.flatMap(id => visible.includes(id) && columnById.get(id) ? [columnById.get(id)!] : []);
   const sorted = useMemo(() => {
@@ -100,12 +105,18 @@ export default function VehicleTable({ rows, storageKey = "cargo.vehicle-table",
       return result === 0 ? left.index - right.index : direction === "asc" ? result : -result;
     }).map(item => item.vehicle);
   }, [direction, rows, sort]);
-  const selectedVisibleIds = sorted.map(vehicle => vehicle.id).filter(id => selectedIds.includes(id));
-  const allVisibleSelected = sorted.length > 0 && selectedVisibleIds.length === sorted.length;
+  const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const pageStart = (currentPage - 1) * pageSize;
+  const pageRows = sorted.slice(pageStart, pageStart + pageSize);
+  const sortedIds = useMemo(() => new Set(sorted.map(vehicle => vehicle.id)), [sorted]);
+  const selectedVisibleIds = selectedIds.filter(id => sortedIds.has(id));
+  const selectedPageIds = pageRows.map(vehicle => vehicle.id).filter(id => selectedIds.includes(id));
+  const allVisibleSelected = pageRows.length > 0 && selectedPageIds.length === pageRows.length;
 
   useEffect(() => {
-    if (selectAllRef.current) selectAllRef.current.indeterminate = selectedVisibleIds.length > 0 && !allVisibleSelected;
-  }, [allVisibleSelected, selectedVisibleIds.length]);
+    if (selectAllRef.current) selectAllRef.current.indeterminate = selectedPageIds.length > 0 && !allVisibleSelected;
+  }, [allVisibleSelected, selectedPageIds.length]);
 
   function move(id: string, offset: -1 | 1) {
     setOrder(current => {
@@ -165,6 +176,8 @@ export default function VehicleTable({ rows, storageKey = "cargo.vehicle-table",
     setVisible(defaultVisible);
     setSort("updatedAt");
     setDirection("desc");
+    setPageSize(defaultPageSize);
+    setPage(1);
   }
 
   async function remove(vehicle: VehicleRecord) {
@@ -190,7 +203,7 @@ export default function VehicleTable({ rows, storageKey = "cargo.vehicle-table",
   }
 
   function toggleAllVisible(checked: boolean) {
-    const visibleIds = sorted.map(vehicle => vehicle.id);
+    const visibleIds = pageRows.map(vehicle => vehicle.id);
     setSelectedIds(current => checked
       ? [...new Set([...current, ...visibleIds])]
       : current.filter(id => !visibleIds.includes(id)));
@@ -224,8 +237,8 @@ export default function VehicleTable({ rows, storageKey = "cargo.vehicle-table",
     {deleteError && <p className="form-error table-error" role="alert">{deleteError}</p>}
     <div className="column-toolbar">
       {canDelete && <div className="bulk-actions"><span>已选 {selectedVisibleIds.length} 条</span><button type="button" disabled={!selectedVisibleIds.length || bulkDeleting || Boolean(deletingId)} onClick={removeSelected}><Trash2 />{bulkDeleting ? "删除中…" : "批量删除"}</button></div>}
-      <label><ArrowUpDown />排序<select value={sort} onChange={event => setSort(event.target.value)}>{columns.map(column => <option value={column.id} key={column.id}>{column.label}</option>)}</select></label>
-      <button type="button" onClick={() => setDirection(current => current === "asc" ? "desc" : "asc")}>{direction === "asc" ? <ArrowUp /> : <ArrowDown />}{direction === "asc" ? "升序" : "降序"}</button>
+      <label><ArrowUpDown />排序<select value={sort} onChange={event => { setSort(event.target.value); setPage(1); }}>{columns.map(column => <option value={column.id} key={column.id}>{column.label}</option>)}</select></label>
+      <button type="button" onClick={() => { setDirection(current => current === "asc" ? "desc" : "asc"); setPage(1); }}>{direction === "asc" ? <ArrowUp /> : <ArrowDown />}{direction === "asc" ? "升序" : "降序"}</button>
       <details><summary><SlidersHorizontal />显示与排列属性</summary><div className="column-picker">{order.map(id => {
         const column = columnById.get(id)!;
         const checked = visible.includes(id);
@@ -233,6 +246,17 @@ export default function VehicleTable({ rows, storageKey = "cargo.vehicle-table",
         return <div key={id} className={`column-picker-item${draggingId === id ? " is-dragging" : ""}${dropClass}`} onDragOver={event => dragOverColumn(event, id)} onDrop={event => dropColumn(event, id)}><label><input type="checkbox" checked={checked} onChange={event => setVisible(current => event.target.checked ? [...current, id] : current.length > 1 ? current.filter(item => item !== id) : current)} />{column.label}</label><button type="button" className="column-drag-handle" draggable onDragStart={event => startColumnDrag(event, id)} onDragEnd={() => { setDraggingId(""); setDropTarget(undefined); }} onKeyDown={event => handleDragKey(event, id)} aria-label={`拖动排列${column.label}`} title="按住并上下拖动调整顺序"><GripVertical /></button></div>;
       })}<button type="button" className="reset-columns" onClick={reset}>恢复默认</button></div></details>
     </div>
-    <div className="table-wrap"><table><thead><tr>{canDelete && <th className="row-select"><input ref={selectAllRef} type="checkbox" checked={allVisibleSelected} disabled={!sorted.length || bulkDeleting} onChange={event => toggleAllVisible(event.target.checked)} aria-label="全选当前列表" /></th>}{visibleColumns.map(column => <th key={column.id}>{column.label}</th>)}<th></th></tr></thead><tbody>{sorted.map(vehicle => <tr key={vehicle.id} className={selectedIds.includes(vehicle.id) ? "selected-row" : undefined}>{canDelete && <td className="row-select"><input type="checkbox" checked={selectedIds.includes(vehicle.id)} disabled={bulkDeleting || deletingId === vehicle.id} onChange={event => setSelectedIds(current => event.target.checked ? [...current, vehicle.id] : current.filter(id => id !== vehicle.id))} aria-label={`选择${vehicle.vin || vehicle.model || "未命名单据"}`} /></td>}{visibleColumns.map(column => <td key={column.id}>{column.render ? column.render(vehicle) : column.value(vehicle) ?? "—"}</td>)}<td><div className="vehicle-row-actions"><Link href={`/vehicles/${vehicle.id}`}>查看 →</Link>{canDelete && <button type="button" className="vehicle-delete" disabled={bulkDeleting || deletingId === vehicle.id} onClick={() => remove(vehicle)} title="删除车辆"><Trash2 />{deletingId === vehicle.id ? "删除中" : "删除"}</button>}</div></td></tr>)}</tbody></table>{!sorted.length && <div className="empty">暂无符合条件的车辆</div>}</div>
+    <div className="table-wrap"><table><thead><tr>{canDelete && <th className="row-select"><input ref={selectAllRef} type="checkbox" checked={allVisibleSelected} disabled={!pageRows.length || bulkDeleting} onChange={event => toggleAllVisible(event.target.checked)} aria-label="全选当前页" /></th>}{visibleColumns.map(column => <th key={column.id}>{column.label}</th>)}<th></th></tr></thead><tbody>{pageRows.map(vehicle => <tr key={vehicle.id} className={selectedIds.includes(vehicle.id) ? "selected-row" : undefined}>{canDelete && <td className="row-select"><input type="checkbox" checked={selectedIds.includes(vehicle.id)} disabled={bulkDeleting || deletingId === vehicle.id} onChange={event => setSelectedIds(current => event.target.checked ? [...current, vehicle.id] : current.filter(id => id !== vehicle.id))} aria-label={`选择${vehicle.vin || vehicle.model || "未命名单据"}`} /></td>}{visibleColumns.map(column => <td key={column.id}>{column.render ? column.render(vehicle) : column.value(vehicle) ?? "—"}</td>)}<td><div className="vehicle-row-actions"><Link href={`/vehicles/${vehicle.id}`}>查看 →</Link>{canDelete && <button type="button" className="vehicle-delete" disabled={bulkDeleting || deletingId === vehicle.id} onClick={() => remove(vehicle)} title="删除车辆"><Trash2 />{deletingId === vehicle.id ? "删除中" : "删除"}</button>}</div></td></tr>)}</tbody></table>{!sorted.length && <div className="empty">暂无符合条件的车辆</div>}</div>
+    {sorted.length > 0 && <nav className="table-pagination" aria-label="车辆列表分页">
+      <span>显示第 {pageStart + 1}–{Math.min(pageStart + pageSize, sorted.length)} 条，共 {sorted.length} 条</span>
+      <label>每页<select value={pageSize} onChange={event => { setPageSize(Number(event.target.value)); setPage(1); }}>{pageSizeOptions.map(option => <option value={option} key={option}>{option}</option>)}</select>条</label>
+      <div>
+        <button type="button" disabled={currentPage === 1} onClick={() => setPage(1)} aria-label="第一页"><ChevronsLeft /></button>
+        <button type="button" disabled={currentPage === 1} onClick={() => setPage(Math.max(1, currentPage - 1))} aria-label="上一页"><ChevronLeft /></button>
+        <span>第 <b>{currentPage}</b> / {totalPages} 页</span>
+        <button type="button" disabled={currentPage === totalPages} onClick={() => setPage(Math.min(totalPages, currentPage + 1))} aria-label="下一页"><ChevronRight /></button>
+        <button type="button" disabled={currentPage === totalPages} onClick={() => setPage(totalPages)} aria-label="最后一页"><ChevronsRight /></button>
+      </div>
+    </nav>}
   </>;
 }
