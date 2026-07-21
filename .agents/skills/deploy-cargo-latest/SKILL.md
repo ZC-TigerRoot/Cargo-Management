@@ -12,7 +12,7 @@ Read [references/production.md](references/production.md) before running command
 - Never print, copy, upload, or persist the private key or an SSH password. Never put credentials in command arguments, scripts, environment variables, commentary, or the final response.
 - Use the local GitHub key only through a temporary `ssh-agent` and `ssh -A`. Never copy the key to the server. Kill the temporary agent when the deployment ends.
 - Keep normal host-key verification enabled. Accept a genuinely new host only with `StrictHostKeyChecking=accept-new`; stop on a changed-host-key warning. Never use `StrictHostKeyChecking=no`.
-- Authenticate to the production server separately from GitHub. Prefer an existing server key or agent. If a password is required, use an interactive TTY and recover it from the current conversation or accessible same-project task according to the SSH discovery workflow; never write it into this skill.
+- Authenticate to the production server separately from GitHub. Prefer an existing server key or agent. If a password is required, use an interactive TTY and ask the user to enter it; never write it into this skill or any file.
 - Preserve the production `.env`, uploads, database, TLS configuration, Nginx configuration, and unrelated processes. Do not expose environment values in output.
 - Do not run `pnpm db:seed` during routine deployments. This project's seed script resets the administrator password and invalidates sessions.
 

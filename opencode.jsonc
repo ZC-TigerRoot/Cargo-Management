@@ -1,0 +1,32 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "share": "disabled",
+  "watcher": {
+    "ignore": [
+      "node_modules/**",
+      ".next/**",
+      "coverage/**",
+      "data/uploads/**"
+    ]
+  },
+  "permission": {
+    "external_directory": "ask",
+    "bash": {
+      "*": "ask",
+      "git status*": "allow",
+      "git diff*": "allow",
+      "git log*": "allow",
+      "rg *": "allow",
+      "pnpm test*": "allow",
+      "pnpm lint*": "allow",
+      "pnpm exec tsc --noEmit*": "allow",
+      "pnpm build*": "allow",
+      "git push*": "ask",
+      "ssh *": "ask",
+      "rsync *": "ask",
+      "pnpm db:deploy*": "ask",
+      "pnpm db:seed*": "ask",
+      "rm *": "ask"
+    }
+  }
+}

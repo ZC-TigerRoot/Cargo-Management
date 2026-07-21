@@ -216,12 +216,12 @@ proxy_set_header X-Forwarded-Proto $scheme;
 
 ## 3. 日常更新方式
 
-### 3.1 推荐方式：让 Codex 执行受保护部署
+### 3.1 推荐方式：让 OpenCode 执行受保护部署
 
-代码合并并推送到 GitHub `main` 后，在本项目中发送：
+代码合并并推送到 GitHub `main` 后，在本项目中执行：
 
 ```text
-使用 $deploy-cargo-latest 部署最新版本
+/deploy
 ```
 
 部署流程会自动完成：
