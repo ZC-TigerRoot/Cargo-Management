@@ -58,7 +58,9 @@ docker volume create cargo_uploads
 docker run --env-file .env -e UPLOAD_DIR=/app/data/uploads -v cargo_uploads:/app/data/uploads -p 3000:3000 cargo-management
 ```
 
-部署前必须执行 `pnpm db:deploy` 和 `pnpm db:seed`，并确保数据库连接和管理员密码使用生产值。生产环境必须把 `APP_URL` 设置为用户实际访问的 HTTPS origin（例如 `https://cargo.example.com`，不要添加路径），并把 `UPLOAD_DIR` 指向持久化、可写且会备份的目录；多实例部署时应挂载同一共享文件系统。管理员可在“基础设置”中配置生成提货二维码使用的当前域名；未配置时依次使用 `APP_URL` 和当前请求域名。
+首次初始化数据库时必须执行 `pnpm db:deploy` 和 `pnpm db:seed`；日常更新只执行 `pnpm db:deploy`，不得再次执行 seed，因为 seed 会重置管理员密码并使已有管理员会话失效。生产环境必须确保数据库连接和管理员密码使用生产值，把 `APP_URL` 设置为用户实际访问的 HTTPS origin（例如 `https://cargo.example.com`，不要添加路径），并把 `UPLOAD_DIR` 指向持久化、可写且会备份的目录；多实例部署时应挂载同一共享文件系统。管理员可在“基础设置”中配置生成提货二维码使用的当前域名；未配置时依次使用 `APP_URL` 和当前请求域名。
+
+当前生产环境采用 Next.js standalone、宝塔/PM2 和 Nginx 的部署方式，首次部署、日常更新、健康检查及回滚流程见 [`docs/production-deployment.md`](docs/production-deployment.md)。
 
 使用 Nginx 反向代理时，应把公开请求信息传给应用：
 
