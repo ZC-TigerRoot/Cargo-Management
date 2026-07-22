@@ -104,7 +104,7 @@ export default function VehicleFormModal({ defaultType = "overseas", initial, on
             <label>状态<select name="status" value={status} onChange={event => setStatus(event.target.value as VehicleStatus)}>{vehicleStatuses.map(item => <option value={item} key={item}>{item}</option>)}</select></label>
             <label>状态变更说明<input name="statusReason" required={status !== initial.status} disabled={status === initial.status} placeholder={status === initial.status ? "状态未变化" : "请填写本次变更原因"} /></label>
           </div>
-          <p className="status-help">状态变更将立即反映在车辆台账，并追加一条不可覆盖的业务事件。</p>
+          <p className="status-help">手动变更状态将追加一条不可覆盖的业务事件。不手动调整时，系统会按业务时间自动更新状态；人工设定过的状态（如“异常”）将保持不变。</p>
         </fieldset>}
         <fieldset className="form-section">
           <legend>车辆与批次</legend>

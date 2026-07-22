@@ -156,13 +156,53 @@ export function toVehicleRecord(vehicle: VehicleWithRelations): VehicleRecord {
   };
 }
 
-function prismaStatus(data: VehiclePayload): PrismaVehicleStatus {
+type StatusInferenceFields = {
+  inboundAt?: string | undefined;
+  merchantReleaseAt?: string | undefined;
+  customerReleaseAt?: string | undefined;
+  pickupDetails?: string | undefined;
+  outboundAt?: string | undefined;
+  outboundNoticeDeliveredAt?: string | undefined;
+  customerReceiptDeliveredAt?: string | undefined;
+  agentReceiptDeliveredAt?: string | undefined;
+};
+
+function prismaStatus(data: StatusInferenceFields): PrismaVehicleStatus {
   if (data.agentReceiptDeliveredAt || data.customerReceiptDeliveredAt) return "COMPLETED";
+  // 车辆已实际出库而客户交付签收单日期仍为空 → 待签收；签收单交付后由上一行推进到已完成。
   if (data.outboundAt) return "PENDING_RECEIPT";
+  // 出库通知单交付给商社日期有值 → 已出库。
+  if (data.outboundNoticeDeliveredAt) return "OUTBOUND";
   if (data.customerReleaseAt || data.pickupDetails) return "PENDING_PICKUP";
   if (data.merchantReleaseAt) return "PENDING_RELEASE";
   if (data.inboundAt) return "IN_STOCK";
   return "PENDING_INBOUND";
+}
+
+// Business-flow order of the statuses automatic inference can produce.
+// EXCEPTION is never inferred; it only changes by hand.
+const autoStatusRank: Record<PrismaVehicleStatus, number> = {
+  PENDING_INBOUND: 0,
+  IN_STOCK: 1,
+  PENDING_RELEASE: 2,
+  PENDING_PICKUP: 3,
+  OUTBOUND: 4,
+  PENDING_RECEIPT: 5,
+  COMPLETED: 6,
+  EXCEPTION: -1,
+};
+
+// The status the system would hold automatically given the date fields and the
+// business events recorded so far. A driver signature always wins because the
+// date fields do not necessarily reflect it; a created pickup task keeps the
+// vehicle at least at PENDING_PICKUP.
+function expectedAutoStatus(vehicle: VehicleWithRelations, data: StatusInferenceFields): PrismaVehicleStatus {
+  if (vehicle.events.some(event => event.type === "DRIVER_SIGNED")) return "COMPLETED";
+  const inferred = prismaStatus(data);
+  if (vehicle.events.some(event => event.type === "PICKUP_CREATED") && autoStatusRank[inferred] < autoStatusRank.PENDING_PICKUP) {
+    return "PENDING_PICKUP";
+  }
+  return inferred;
 }
 
 async function upsertRelations(tx: Prisma.TransactionClient, data: VehiclePayload, context: MutationContext) {
@@ -347,7 +387,15 @@ export async function updateVehicle(id: string, expectedVersion: number, data: V
     if (existing.version !== expectedVersion) throw new VersionConflictError();
     const before = toVehicleRecord(existing);
     const { batch, customer, warehouse } = await upsertRelations(tx, data, context);
-    const nextStatus = data.status ? vehicleStatusCodes[data.status] : existing.status;
+    // A manual status choice always wins. Otherwise recompute from the
+    // submitted data, but only when the current status still matches what the
+    // rules infer from the existing data: a status set by hand diverges from
+    // inference and is preserved until the user changes it manually again.
+    const inferredBefore = expectedAutoStatus(existing, before);
+    const inferredAfter = expectedAutoStatus(existing, data);
+    const nextStatus = data.status
+      ? vehicleStatusCodes[data.status]
+      : existing.status === inferredBefore ? inferredAfter : existing.status;
     const extra = vehicleExtra(data, existing.extra);
     const result = await tx.vehicle.updateMany({
       where: { id, version: expectedVersion },
@@ -365,13 +413,20 @@ export async function updateVehicle(id: string, expectedVersion: number, data: V
 
     await appendDateCorrections(tx, existing, data, context);
     if (existing.status !== nextStatus) {
+      const manual = Boolean(data.status);
       await tx.inventoryEvent.create({
         data: {
           vehicleId: id,
           type: nextStatus === "EXCEPTION" ? "EXCEPTION" : "CORRECTION",
           occurredAt: new Date(),
           actorId: context.actorId,
-          payload: { source: "status-edit", field: "status", from: vehicleStatusNames[existing.status], to: vehicleStatusNames[nextStatus], reason: data.statusReason! },
+          payload: {
+            source: manual ? "status-edit" : "auto-infer",
+            field: "status",
+            from: vehicleStatusNames[existing.status],
+            to: vehicleStatusNames[nextStatus],
+            reason: manual ? data.statusReason! : "根据业务时间自动更新",
+          },
         },
       });
     }
