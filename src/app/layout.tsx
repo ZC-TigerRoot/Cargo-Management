@@ -8,6 +8,8 @@ export const metadata: Metadata = {
   manifest: "/manifest.webmanifest",
 };
 
+export const dynamic = "force-dynamic";
+
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return <html lang="zh-CN"><body>{children}</body></html>;
 }
