@@ -101,7 +101,7 @@ function matchesInventoryAge(vehicle: VehicleRecord, filter: VehicleFilters["inv
 const keywordFields: (keyof VehicleRecord)[] = [
   "vin", "model", "brand", "referenceNo", "hsCode", "portOfLoad", "portOfDischarge", "vesselVoyage", "manufacturer",
   "warehouseLocation", "warehouse", "customer", "status", "inboundAmount", "inboundBoeNo", "outboundBoeNo", "outboundBoeTitle",
-  "outboundAmount", "pickupDetails", "notes",
+  "outboundAmount",
 ];
 
 function matchesKeywords(vehicle: VehicleRecord, query: string) {
