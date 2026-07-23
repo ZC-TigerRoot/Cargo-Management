@@ -123,6 +123,7 @@ describe("认证与权限边界", () => {
     await expect(requirePayloadWarehouseInScope(warehouseUser, "仓库 A", "上海")).rejects.toMatchObject({ status: 403 });
     mocks.warehouseFindUnique.mockResolvedValueOnce({ id: "w1" });
     await expect(requirePayloadWarehouseInScope(warehouseUser, "仓库 A", "上海")).resolves.toBeUndefined();
+    await expect(requirePayloadWarehouseInScope(warehouseUser, undefined, undefined, { required: true })).rejects.toMatchObject({ status: 403 });
     await expect(requirePayloadWarehouseInScope(accessUser(), "任意仓库", "任意地点")).resolves.toBeUndefined();
   });
 
@@ -132,7 +133,9 @@ describe("认证与权限边界", () => {
       headers: new Headers({ origin: "https://evil.example.com", host: "cargo.example.com", "x-forwarded-for": "203.0.113.8, 10.0.0.1" }),
     };
     expect(() => assertSameOrigin(crossSite as never)).toThrow(AuthorizationError);
+    vi.stubEnv("TRUST_PROXY", "true");
     expect(requestIp(crossSite as never)).toBe("203.0.113.8");
     expect(requestIp({ ...crossSite, headers: new Headers({ "x-real-ip": "198.51.100.9" }) } as never)).toBe("198.51.100.9");
+    vi.unstubAllEnvs();
   });
 });

@@ -8,8 +8,11 @@ export async function POST(req: NextRequest) {
   try {
     const user = await requireUser("create");
     assertSameOrigin(req);
-    const contentLength = Number(req.headers.get("content-length"));
-    if (Number.isFinite(contentLength) && contentLength > MAX_IMPORT_FILE_SIZE + 1_000_000) {
+    const contentLengthHeader = req.headers.get("content-length");
+    if (!contentLengthHeader) return NextResponse.json({ error: "LENGTH_REQUIRED", message: "上传请求必须包含 Content-Length" }, { status: 411 });
+    const contentLength = Number(contentLengthHeader);
+    if (!Number.isFinite(contentLength) || contentLength < 0) return NextResponse.json({ error: "INVALID_LENGTH", message: "上传请求长度无效" }, { status: 400 });
+    if (contentLength > MAX_IMPORT_FILE_SIZE + 1_000_000) {
       return NextResponse.json({ error: "FILE_TOO_LARGE", message: "Excel 文件不能超过 10 MB" }, { status: 413 });
     }
     const form = await req.formData();
@@ -22,7 +25,7 @@ export async function POST(req: NextRequest) {
 
     for (const row of validRows) {
       try {
-        await requirePayloadWarehouseInScope(user, row.payload.warehouse, row.payload.warehouseLocation);
+        await requirePayloadWarehouseInScope(user, row.payload.warehouse, row.payload.warehouseLocation, { required: true });
         await createVehicle(row.payload, `excel:${crypto.randomUUID()}`, { actorId: user.id, ip: requestIp(req) });
         imported.push(row.row);
       } catch (error) {

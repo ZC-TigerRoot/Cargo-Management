@@ -22,14 +22,14 @@ describe("写请求同源校验", () => {
     expect(isSameOriginRequest(req)).toBe(true);
   });
 
-  it("接受可信反向代理转发的公开来源", () => {
+  it("接受 APP_URL 明确配置的反向代理公开来源", () => {
     const req = request("http://localhost:3000/api/v1/auth/login", {
       host: "app:3000",
       origin: "https://cargo.example.com",
       "x-forwarded-host": "cargo.example.com",
       "x-forwarded-proto": "https",
     });
-    expect(isSameOriginRequest(req)).toBe(true);
+    expect(isSameOriginRequest(req, "https://cargo.example.com")).toBe(true);
   });
 
   it("接受 APP_URL 中配置的生产来源", () => {
@@ -71,13 +71,23 @@ describe("写请求同源校验", () => {
     expect(isSameOriginRequest(wrongProtocol)).toBe(false);
   });
 
-  it("拒绝格式无效的来源，并保留无 Origin 客户端的既有行为", () => {
+  it("拒绝格式无效或缺失的 Origin", () => {
     const invalid = request("http://localhost:3000/api/v1/auth/login", {
       host: "localhost:3000",
       origin: "not-a-url",
     });
     const absent = request("http://localhost:3000/api/v1/auth/login", { host: "localhost:3000" });
     expect(isSameOriginRequest(invalid)).toBe(false);
-    expect(isSameOriginRequest(absent)).toBe(true);
+    expect(isSameOriginRequest(absent)).toBe(false);
+  });
+
+  it("不把客户端提交的转发主机头当作可信来源", () => {
+    const spoofed = request("http://localhost:3000/api/v1/auth/login", {
+      host: "localhost:3000",
+      origin: "https://evil.example.com",
+      "x-forwarded-host": "evil.example.com",
+      "x-forwarded-proto": "https",
+    });
+    expect(isSameOriginRequest(spoofed, "https://cargo.example.com")).toBe(false);
   });
 });

@@ -95,14 +95,14 @@ export function inventoryDays(inboundAt?: string, outboundAt?: string, now = new
   return Math.max(0, Math.ceil((end.getTime() - new Date(inboundAt).getTime()) / 86_400_000));
 }
 
-export type Permission = "view" | "create" | "correct" | "delete" | "export" | "coordinatePickups" | "manageUsers" | "manageSettings";
+export type Permission = "view" | "create" | "correct" | "delete" | "export" | "coordinatePickups" | "manageUsers" | "manageSettings" | "managePublicUrl";
 
 export const can = (role: Role, action: Permission) => {
   const grants: Record<Role, string[]> = {
     warehouse: ["view", "create", "correct", "coordinatePickups"],
     forwarder: ["view", "create", "correct", "export", "coordinatePickups", "manageSettings"],
     customer: ["view"],
-    admin: ["view", "create", "correct", "delete", "export", "coordinatePickups", "manageUsers", "manageSettings"],
+    admin: ["view", "create", "correct", "delete", "export", "coordinatePickups", "manageUsers", "manageSettings", "managePublicUrl"],
   };
   return grants[role].includes(action);
 };

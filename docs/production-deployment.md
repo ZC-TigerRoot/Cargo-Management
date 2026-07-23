@@ -87,6 +87,7 @@ DB_PASSWORD="请填写生产数据库密码"
 
 AUTH_SECRET="请填写至少32字符的随机值"
 APP_URL="https://cargo.tigerroot.cn"
+TRUST_PROXY="true"
 
 ADMIN_EMAIL="请填写初始管理员邮箱"
 ADMIN_PASSWORD="请填写至少12字符的初始管理员密码"
@@ -208,11 +209,15 @@ chown -R www:www /www/wwwroot/Cargo-Management/app
 Nginx 将公网域名反向代理到 `http://127.0.0.1:3000`，至少保留以下请求头设置：
 
 ```nginx
-client_max_body_size 6m;
+client_max_body_size 12m;
 proxy_set_header Host $host;
 proxy_set_header X-Forwarded-Host $host;
 proxy_set_header X-Forwarded-Proto $scheme;
+proxy_set_header X-Forwarded-For $remote_addr;
+proxy_set_header X-Real-IP $remote_addr;
 ```
+
+`TRUST_PROXY="true"` 只适用于应用监听 `127.0.0.1`、公网请求必须经过该 Nginx，且 Nginx 覆盖客户端提交的来源头这一部署方式。
 
 ## 3. 日常更新方式
 

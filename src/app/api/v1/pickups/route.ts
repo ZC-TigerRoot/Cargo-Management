@@ -11,6 +11,8 @@ const pickupInput = z.object({
   vehicleIds: z.array(z.string().min(1)).min(1).max(50),
   expiresAt: z.iso.datetime(),
 });
+const revokeInput = z.object({ id: z.string().min(1).max(128), action: z.literal("revoke") });
+const MAX_PICKUP_TASK_AGE_MS = 30 * 24 * 60 * 60 * 1_000;
 
 class PickupCreationError extends Error {
   constructor(public code: string, message: string, public status: 404 | 409) {
@@ -59,7 +61,11 @@ export async function POST(req: NextRequest) {
     const parsed = pickupInput.safeParse(await req.json());
     if (!parsed.success) return NextResponse.json({ error: "VALIDATION_ERROR", issues: parsed.error.flatten() }, { status: 422 });
     const expiresAt = new Date(parsed.data.expiresAt);
-    if (expiresAt <= new Date()) return NextResponse.json({ error: "INVALID_EXPIRY", message: "二维码有效期必须晚于当前时间" }, { status: 422 });
+    const now = new Date();
+    if (expiresAt <= now) return NextResponse.json({ error: "INVALID_EXPIRY", message: "二维码有效期必须晚于当前时间" }, { status: 422 });
+    if (expiresAt.getTime() - now.getTime() > MAX_PICKUP_TASK_AGE_MS) {
+      return NextResponse.json({ error: "INVALID_EXPIRY", message: "二维码有效期不能超过 30 天" }, { status: 422 });
+    }
     const vehicleIds = [...new Set(parsed.data.vehicleIds)];
     const scopedVehicles = await prisma.vehicle.findMany({
       where: { id: { in: vehicleIds }, ...vehicleScopeWhere(user) },
@@ -154,5 +160,50 @@ export async function POST(req: NextRequest) {
     if (error instanceof SyntaxError) return NextResponse.json({ error: "INVALID_JSON", message: "请求内容不是有效的 JSON" }, { status: 400 });
     console.error(error);
     return NextResponse.json({ error: "DATABASE_ERROR", message: "创建提货任务失败" }, { status: 503 });
+  }
+}
+
+export async function PATCH(req: NextRequest) {
+  try {
+    const user = await requireUser("coordinatePickups");
+    assertSameOrigin(req);
+    const parsed = revokeInput.safeParse(await req.json());
+    if (!parsed.success) return NextResponse.json({ error: "VALIDATION_ERROR", message: "撤销请求无效" }, { status: 422 });
+
+    const task = await prisma.pickupTask.findFirst({
+      where: { id: parsed.data.id, ...pickupTaskScopeWhere(user) },
+      select: { id: true, taskNo: true, submittedAt: true, revokedAt: true },
+    });
+    if (!task) return NextResponse.json({ error: "NOT_FOUND", message: "提货任务不存在" }, { status: 404 });
+    if (task.submittedAt) return NextResponse.json({ error: "ALREADY_SUBMITTED", message: "已签收的提货任务不能撤销" }, { status: 409 });
+    if (task.revokedAt) return NextResponse.json({ data: { id: task.id, status: "revoked", revokedAt: task.revokedAt.toISOString() } });
+
+    const now = new Date();
+    const revoked = await prisma.$transaction(async tx => {
+      const updated = await tx.pickupTask.updateMany({
+        where: { id: task.id, submittedAt: null, revokedAt: null },
+        data: { revokedAt: now },
+      });
+      if (updated.count !== 1) return false;
+      await tx.auditLog.create({
+        data: {
+          actorId: user.id,
+          action: "PICKUP_REVOKED",
+          entityType: "PickupTask",
+          entityId: task.id,
+          before: { taskNo: task.taskNo, status: "pending", revokedAt: null },
+          after: { taskNo: task.taskNo, status: "revoked", revokedAt: now.toISOString() },
+          ip: requestIp(req),
+        },
+      });
+      return true;
+    });
+    if (!revoked) return NextResponse.json({ error: "SUBMISSION_CONFLICT", message: "任务状态已变化，请刷新后重试" }, { status: 409 });
+    return NextResponse.json({ data: { id: task.id, status: "revoked", revokedAt: now.toISOString() } });
+  } catch (error) {
+    if (error instanceof AuthorizationError) return NextResponse.json({ error: error.status === 401 ? "UNAUTHENTICATED" : "FORBIDDEN", message: error.message }, { status: error.status });
+    if (error instanceof SyntaxError) return NextResponse.json({ error: "INVALID_JSON", message: "请求内容不是有效的 JSON" }, { status: 400 });
+    console.error(error);
+    return NextResponse.json({ error: "DATABASE_ERROR", message: "撤销提货任务失败" }, { status: 503 });
   }
 }

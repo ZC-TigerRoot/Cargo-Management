@@ -3,10 +3,6 @@ type OriginRequest = {
   nextUrl: { protocol: string };
 };
 
-function firstHeaderValue(value: string | null) {
-  return value?.split(",", 1)[0]?.trim() || undefined;
-}
-
 function normalizedOrigin(value: string) {
   try {
     return new URL(value).origin;
@@ -17,11 +13,9 @@ function normalizedOrigin(value: string) {
 
 function requestOriginCandidates(req: OriginRequest, configuredOrigin?: string) {
   const hosts = [
-    firstHeaderValue(req.headers.get("x-forwarded-host")),
     req.headers.get("host")?.trim() || undefined,
   ];
   const protocols = [
-    firstHeaderValue(req.headers.get("x-forwarded-proto")),
     req.nextUrl.protocol,
   ];
   const origins = new Set<string>();
@@ -42,7 +36,7 @@ function requestOriginCandidates(req: OriginRequest, configuredOrigin?: string) 
 
 export function isSameOriginRequest(req: OriginRequest, configuredOrigin = process.env.APP_URL) {
   const originHeader = req.headers.get("origin");
-  if (!originHeader) return true;
+  if (!originHeader) return false;
 
   const origin = normalizedOrigin(originHeader);
   if (!origin) return false;

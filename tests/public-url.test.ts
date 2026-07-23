@@ -34,6 +34,11 @@ describe("公开域名与提货链接", () => {
     }
   });
 
+  it("生产环境只允许 HTTPS 或回环地址", () => {
+    expect(() => normalizePublicBaseUrl("http://cargo.example.com", true)).toThrow("https");
+    expect(normalizePublicBaseUrl("http://localhost:3000", true)).toBe("http://localhost:3000");
+  });
+
   it("优先使用数据库设置，其次使用环境变量和请求来源", async () => {
     findSetting.mockResolvedValueOnce({ publicBaseUrl: "https://configured.example.com" });
     await expect(getPublicBaseUrl("https://fallback.example.com")).resolves.toBe("https://configured.example.com");

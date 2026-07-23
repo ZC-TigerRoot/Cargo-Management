@@ -49,7 +49,7 @@ export async function POST(req: NextRequest) {
     const parsed = vehicleInput.safeParse(await req.json());
     if (!parsed.success) return NextResponse.json({ error: "VALIDATION_ERROR", issues: parsed.error.flatten() }, { status: 422 });
     const { idempotencyKey, ...data } = parsed.data;
-    await requirePayloadWarehouseInScope(user, data.warehouse, data.warehouseLocation);
+    await requirePayloadWarehouseInScope(user, data.warehouse, data.warehouseLocation, { required: true });
     const vehicle = await createVehicle(data, idempotencyKey, { actorId: user.id, ip: requestIp(req) });
     return NextResponse.json({ data: toVehicleRecord(vehicle), audit: { action: "VEHICLE_CREATED", actor: user.name } }, { status: 201 });
   } catch (error) {

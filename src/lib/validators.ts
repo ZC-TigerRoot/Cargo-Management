@@ -2,7 +2,8 @@ import { z } from "zod";
 import { vehicleStatuses } from "./domain";
 import { CHINA_TIME_ZONE } from "./datetime";
 
-const optionalText = z.string().trim().optional().transform(value => value || undefined);
+const optionalText = z.string().trim().max(2_000, "文本内容不能超过 2000 个字符").optional().transform(value => value || undefined);
+const optionalLongText = z.string().trim().max(5_000, "文本内容不能超过 5000 个字符").optional().transform(value => value || undefined);
 const optionalVin = z.string().trim().max(100, "车架号不能超过 100 个字符").optional()
   .transform(value => value ? value.toUpperCase() : undefined);
 const optionalDateTime = z.iso.datetime({ offset: true }).optional();
@@ -39,7 +40,7 @@ export const vehiclePayload = z.object({
   merchantReleaseAt: optionalDateTime,
   transferDocNoticeAt: optionalDateTime,
   customerReleaseAt: optionalDateTime,
-  pickupDetails: optionalText,
+  pickupDetails: optionalLongText,
   outboundAt: optionalDateTime,
   outboundBoeNo: optionalText,
   outboundBoeTitle: optionalText,
@@ -47,7 +48,7 @@ export const vehiclePayload = z.object({
   outboundNoticeDeliveredAt: optionalDateTime,
   customerReceiptDeliveredAt: optionalDateTime,
   agentReceiptDeliveredAt: optionalDateTime,
-  notes: optionalText,
+  notes: optionalLongText,
 }).superRefine((data, ctx) => {
   if (data.inboundAt && data.outboundAt && new Date(data.inboundAt) > new Date(data.outboundAt)) {
     ctx.addIssue({ code: "custom", path: ["outboundAt"], message: "实际出库时间不能早于入库时间" });
@@ -57,9 +58,9 @@ export const vehiclePayload = z.object({
   }
 });
 
-export const vehicleInput = vehiclePayload.and(z.object({ idempotencyKey: z.string().min(8) }));
+export const vehicleInput = vehiclePayload.and(z.object({ idempotencyKey: z.string().min(8).max(128) }));
 export const vehicleUpdateInput = vehiclePayload.and(z.object({
-  id: z.string().min(1),
+  id: z.string().min(1).max(128),
   version: z.number().int().positive(),
   status: z.enum(vehicleStatuses).optional(),
   statusReason: optionalText,
@@ -71,7 +72,7 @@ export const vehicleUpdateInput = vehiclePayload.and(z.object({
 
 export const driverSubmission = z.object({
   pickupAt: z.iso.datetime(),
-  idempotencyKey: z.string().min(8),
+  idempotencyKey: z.string().min(8).max(128),
   driverName: z.string().trim().min(1, "请填写姓名").max(100, "姓名不能超过 100 个字符"),
   driverPhone: z.string().trim()
     .min(1, "请填写联系电话")
@@ -81,6 +82,6 @@ export const driverSubmission = z.object({
 });
 
 export const vehicleDeleteInput = z.union([
-  z.object({ id: z.string().min(1) }).transform(({ id }) => ({ ids: [id] })),
-  z.object({ ids: z.array(z.string().min(1)).min(1, "请至少选择一条单据") }),
+  z.object({ id: z.string().min(1).max(128) }).transform(({ id }) => ({ ids: [id] })),
+  z.object({ ids: z.array(z.string().min(1).max(128)).min(1, "请至少选择一条单据") }),
 ]);

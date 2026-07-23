@@ -49,8 +49,7 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ token:
       status: task!.submittedAt ? "submitted" : "pending",
       submittedAt: task!.submittedAt?.toISOString(),
       receiptNo: task!.submittedAt ? receiptNo(task!.taskNo) : undefined,
-      ...submittedDriver(task!.driverSubmission),
-      vehicles: task!.items.map(item => ({ id: item.vehicle.id, vin: item.vehicle.vin ?? undefined, model: item.vehicle.model ?? undefined })),
+      vehicles: task!.items.map(item => ({ id: item.vehicle.id, vin: item.vehicle.vin?.slice(-6), model: item.vehicle.model ?? undefined })),
     } });
   } catch (error) {
     console.error(error);
@@ -67,8 +66,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
     if (!req.headers.get("content-type")?.toLowerCase().startsWith("multipart/form-data")) {
       return NextResponse.json({ error: "INVALID_CONTENT_TYPE", message: "请使用表单上传车辆照片" }, { status: 415 });
     }
-    const contentLength = Number(req.headers.get("content-length"));
-    if (Number.isFinite(contentLength) && contentLength > MAX_DRIVER_PHOTO_BYTES + 1_000_000) {
+    const contentLengthHeader = req.headers.get("content-length");
+    if (!contentLengthHeader) return NextResponse.json({ error: "LENGTH_REQUIRED", message: "上传请求必须包含 Content-Length" }, { status: 411 });
+    const contentLength = Number(contentLengthHeader);
+    if (!Number.isFinite(contentLength) || contentLength < 0) return NextResponse.json({ error: "INVALID_LENGTH", message: "上传请求长度无效" }, { status: 400 });
+    if (contentLength > MAX_DRIVER_PHOTO_BYTES + 1_000_000) {
       return NextResponse.json({ error: "PAYLOAD_TOO_LARGE", message: "车辆照片不能超过 5 MB" }, { status: 413 });
     }
 

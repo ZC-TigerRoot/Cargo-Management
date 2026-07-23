@@ -170,6 +170,14 @@ export async function PATCH(req: NextRequest) {
     const invalidScope = await validateScope(customerId, warehouseIds);
     if (invalidScope) return invalidScope;
     const passwordHash = parsed.data.password ? await bcrypt.hash(parsed.data.password, 12) : undefined;
+    const previousWarehouseIds = before.warehouseScopes.map(scope => scope.warehouseId).sort();
+    const nextWarehouseIds = [...warehouseIds].sort();
+    const invalidatesSession = Boolean(parsed.data.password) ||
+      (parsed.data.active ?? before.active) !== before.active ||
+      targetRole !== before.role ||
+      customerId !== before.customerId ||
+      previousWarehouseIds.length !== nextWarehouseIds.length ||
+      previousWarehouseIds.some((warehouseId, index) => warehouseId !== nextWarehouseIds[index]);
 
     const updated = await prisma.$transaction(async tx => {
       const user = await tx.user.update({
@@ -179,7 +187,7 @@ export async function PATCH(req: NextRequest) {
           name: parsed.data.name,
           email: parsed.data.email,
           passwordHash,
-          sessionVersion: parsed.data.password ? { increment: 1 } : undefined,
+          sessionVersion: invalidatesSession ? { increment: 1 } : undefined,
           role: targetRole,
           customerId,
           warehouseScopes: {
@@ -203,7 +211,7 @@ export async function PATCH(req: NextRequest) {
       return user;
     });
     const response = NextResponse.json({ data: userData(updated) });
-    if (parsed.data.password && parsed.data.id === actor.id) {
+    if (invalidatesSession && parsed.data.id === actor.id) {
       response.cookies.set(SESSION_COOKIE, "", { ...sessionCookieOptions, maxAge: 0 });
     }
     return response;

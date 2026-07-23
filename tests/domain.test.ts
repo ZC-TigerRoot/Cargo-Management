@@ -18,6 +18,10 @@ describe("库存领域规则", () => {
     expect(can("warehouse", "manageUsers")).toBe(false);
     expect(can("customer", "manageUsers")).toBe(false);
   });
+  it("只有管理员可以修改提货链接域名", () => {
+    expect(can("admin", "managePublicUrl")).toBe(true);
+    expect(can("forwarder", "managePublicUrl")).toBe(false);
+  });
   it("只有管理员可以删除车辆", () => {
     expect(can("admin", "delete")).toBe(true);
     expect(can("forwarder", "delete")).toBe(false);
@@ -198,6 +202,11 @@ describe("车辆录入校验", () => {
       idempotencyKey: "manual-empty-001",
     });
     expect(result.success).toBe(true);
+  });
+
+  it("拒绝超长业务文本和幂等键", () => {
+    expect(vehicleInput.safeParse({ ...base, notes: "x".repeat(5_001) }).success).toBe(false);
+    expect(vehicleInput.safeParse({ ...base, idempotencyKey: "x".repeat(129) }).success).toBe(false);
   });
 });
 

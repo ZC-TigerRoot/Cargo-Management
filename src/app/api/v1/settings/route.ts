@@ -4,7 +4,7 @@ import { assertSameOrigin, AuthorizationError, requestIp, requireUser } from "@/
 import { prisma } from "@/lib/prisma";
 import { getPublicBaseUrl, normalizePublicBaseUrl } from "@/lib/public-url";
 
-const settingInput = z.object({ publicBaseUrl: z.string().trim().min(1) });
+const settingInput = z.object({ publicBaseUrl: z.string().trim().min(1).max(2_048) });
 
 export async function GET(req: NextRequest) {
   try {
@@ -28,7 +28,7 @@ export async function GET(req: NextRequest) {
 
 export async function PATCH(req: NextRequest) {
   try {
-    const user = await requireUser("manageSettings");
+    const user = await requireUser("managePublicUrl");
     assertSameOrigin(req);
     const parsed = settingInput.safeParse(await req.json());
     if (!parsed.success) return NextResponse.json({ error: "VALIDATION_ERROR", message: "请输入完整的当前域名，例如 https://cargo.example.com" }, { status: 422 });

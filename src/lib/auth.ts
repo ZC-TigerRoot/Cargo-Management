@@ -61,9 +61,14 @@ export async function requireVehicleInScope(user: AccessUser, vehicleId: string)
   if (!vehicle) throw new AuthorizationError(403, "当前账号不能访问或修改该车辆");
 }
 
-export async function requirePayloadWarehouseInScope(user: AccessUser, warehouseName?: string, warehouseLocation?: string) {
+export async function requirePayloadWarehouseInScope(
+  user: AccessUser,
+  warehouseName?: string,
+  warehouseLocation?: string,
+  options: { required?: boolean } = {},
+) {
   if (user.roleName !== "warehouse") return;
-  if (!warehouseName && !warehouseLocation) return;
+  if (!warehouseName && !warehouseLocation && !options.required) return;
   if (!warehouseName || !warehouseLocation) {
     throw new AuthorizationError(403, "仓管填写仓库时必须同时提供仓库名称和地点");
   }
@@ -81,5 +86,6 @@ export function assertSameOrigin(req: NextRequest) {
 }
 
 export function requestIp(req: NextRequest) {
+  if (process.env.TRUST_PROXY !== "true") return undefined;
   return req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || req.headers.get("x-real-ip") || undefined;
 }

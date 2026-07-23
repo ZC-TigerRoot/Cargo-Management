@@ -59,7 +59,7 @@ export default function ModulePage({ kind }: { kind: Kind }) {
         {kind === "pickups" && <PickupModule records={records} canCreate={can(role, "create")} />}
         {kind === "imports" && <ImportModule />}
         {kind === "reports" && <><article className="panel report-filter-panel"><VehicleFilterBar records={records} filters={filters} onChange={setFilters}/></article><ReportModule records={rows} /></>}
-        {kind === "settings" && <SettingsModule />}
+        {kind === "settings" && <SettingsModule canEditPublicUrl={can(role, "managePublicUrl")} />}
       </section>
     </main>
     {modal && <VehicleFormModal defaultType={type} onClose={() => setModal(false)} onSaved={saveRecord} />}
@@ -139,6 +139,24 @@ function PickupModule({ records, canCreate }: { records: VehicleRecord[]; canCre
     }
   }
 
+  async function revokeTask(task: PickupTask) {
+    if (!window.confirm(`确认撤销提货任务“${task.taskNo}”？原二维码将立即失效。`)) return;
+    setError("");
+    try {
+      const response = await fetch("/api/v1/pickups", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: task.id, action: "revoke" }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || "撤销提货任务失败");
+      setTasks(current => current.map(item => item.id === task.id ? { ...item, status: "revoked" } : item));
+      if (pickupQr?.taskNo === task.taskNo) setPickupQr(undefined);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "撤销提货任务失败");
+    }
+  }
+
   const statusName = { pending: "进行中", submitted: "已签收", expired: "已过期", revoked: "已撤销" };
   return <div className="pickup-layout">
     <div className="panel pickup-search-toolbar"><label className="search"><Search/><input type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索任务号、提单号 / PO、车架号、车型、客户或仓库…" aria-label="搜索提货二维码车辆"/></label><span>{query.trim() ? "找到" : "共"} {filteredEligible.length} 辆可生成 · {filteredTasks.length} 个已有任务</span></div>
@@ -148,7 +166,7 @@ function PickupModule({ records, canCreate }: { records: VehicleRecord[]; canCre
         const referenceNo = recordById.get(vehicle.id)?.referenceNo;
         return referenceNo ? [referenceNo] : [];
       }))];
-      return <article className="panel action-card" key={task.id}><span>{statusName[task.status]}</span><h3>{task.taskNo}</h3><p>{task.vehicles.map(vehicle => vehicle.model || "未填写车型").join("、")}</p><small>{references.length ? <>单号 {references.join(" · ")}<br/></> : null}{task.vehicles.map(vehicle => vehicle.vin ? `···${vehicle.vin.slice(-6)}` : "未填写车架号").join(" · ")}<br/>有效至 {chinaDateTime(task.expiresAt)}</small><button type="button" className="task-qr-button" onClick={() => showTaskQr(task)}>查看二维码</button></article>;
+      return <article className="panel action-card" key={task.id}><span>{statusName[task.status]}</span><h3>{task.taskNo}</h3><p>{task.vehicles.map(vehicle => vehicle.model || "未填写车型").join("、")}</p><small>{references.length ? <>单号 {references.join(" · ")}<br/></> : null}{task.vehicles.map(vehicle => vehicle.vin ? `···${vehicle.vin.slice(-6)}` : "未填写车架号").join(" · ")}<br/>有效至 {chinaDateTime(task.expiresAt)}</small><button type="button" className="task-qr-button" onClick={() => showTaskQr(task)}>查看二维码</button>{task.status === "pending" && canCreate && <button type="button" className="task-qr-button" onClick={() => revokeTask(task)}>撤销二维码</button>}</article>;
     })}{!filteredTasks.length && !error && <p className="muted">{query.trim() ? "没有找到已有二维码任务" : "暂无提货任务"}</p>}</div>
   </div>;
 }
@@ -199,7 +217,7 @@ function ReportModule({ records }: { records: VehicleRecord[] }) {
 }
 
 type SettingsData = { publicBaseUrl: string; warehouses: { id: string; name: string; location: string; bonded: boolean }[]; customers: { id: string; name: string; vehicleCount: number }[] };
-function SettingsModule() {
+function SettingsModule({ canEditPublicUrl }: { canEditPublicUrl: boolean }) {
   const [data, setData] = useState<SettingsData>({ publicBaseUrl: "", warehouses: [], customers: [] });
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -220,5 +238,5 @@ function SettingsModule() {
       setSaving(false);
     }
   }
-  return <div><div className="module-cards"><article className="panel settings-card settings-domain-card"><h3>提货链接当前域名</h3><p>用于生成司机签收链接和二维码，请填写司机手机能够访问的完整域名。</p><form className="settings-form" onSubmit={savePublicBaseUrl}><label>当前域名<input type="url" value={data.publicBaseUrl} onChange={event => setData(current => ({ ...current, publicBaseUrl: event.target.value }))} placeholder="https://cargo.example.com" required/></label><button className="primary-button" disabled={saving}>{saving ? "保存中…" : "保存域名"}</button></form>{message && <p className="form-success">{message}</p>}</article><article className="panel settings-card"><h3>仓库主数据</h3>{data.warehouses.map(warehouse => <p key={warehouse.id}><b>{warehouse.name}</b><br/>{warehouse.location} · {warehouse.bonded ? "保税仓" : "普通仓"}</p>)}</article><article className="panel settings-card"><h3>客户主数据</h3>{data.customers.map(customer => <p key={customer.id}><b>{customer.name}</b> · {customer.vehicleCount} 辆车</p>)}</article></div>{error && <p className="form-error">{error}</p>}</div>;
+  return <div><div className="module-cards"><article className="panel settings-card settings-domain-card"><h3>提货链接当前域名</h3><p>用于生成司机签收链接和二维码，请填写司机手机能够访问的完整域名。</p><form className="settings-form" onSubmit={savePublicBaseUrl}><label>当前域名<input type="url" value={data.publicBaseUrl} onChange={event => setData(current => ({ ...current, publicBaseUrl: event.target.value }))} placeholder="https://cargo.example.com" readOnly={!canEditPublicUrl} required/></label>{canEditPublicUrl && <button className="primary-button" disabled={saving}>{saving ? "保存中…" : "保存域名"}</button>}</form>{!canEditPublicUrl && <p className="muted">只有管理员可以修改提货链接域名。</p>}{message && <p className="form-success">{message}</p>}</article><article className="panel settings-card"><h3>仓库主数据</h3>{data.warehouses.map(warehouse => <p key={warehouse.id}><b>{warehouse.name}</b><br/>{warehouse.location} · {warehouse.bonded ? "保税仓" : "普通仓"}</p>)}</article><article className="panel settings-card"><h3>客户主数据</h3>{data.customers.map(customer => <p key={customer.id}><b>{customer.name}</b> · {customer.vehicleCount} 辆车</p>)}</article></div>{error && <p className="form-error">{error}</p>}</div>;
 }
