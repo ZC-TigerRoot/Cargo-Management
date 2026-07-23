@@ -18,6 +18,7 @@
 .qr-result small { color: var(--muted); font-size: 10px; text-align: center; }
 .qr-actions { display: flex; gap: 16px; }
 .task-qr-button { border: 0; background: transparent; padding: 0; color: var(--green); font-size: 12px; font-weight: 700; cursor: pointer; }
+.task-qr-button + .task-qr-button { margin-left: 16px; }
 .simple-list select { border: 1px solid var(--line); border-radius: 7px; padding: 6px; font-size: 10px; background: white; }
 .column-toolbar { position: relative; display: flex; justify-content: flex-end; align-items: center; gap: 8px; padding: 0 20px 12px; }
 .column-toolbar>label,.column-toolbar>button,.column-toolbar summary { min-height: 34px; display: flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 8px; background: #fff; padding: 0 10px; font-size: 11px; color: #59655f; cursor: pointer; }
