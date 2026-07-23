@@ -5,10 +5,17 @@ umask 077
 
 SERVICE_DIR="${SERVICE_DIR:-/www/wwwroot/Cargo-Management}"
 BACKUP_ROOT="${BACKUP_ROOT:-/lhcos-data/Cargo_Backup}"
-ENV_FILE="${ENV_FILE:-$SERVICE_DIR/shared/.env}"
 RETENTION_DAYS="${RETENTION_DAYS:-30}"
 MAX_BACKUPS=5
 NODE_BIN="${NODE_BIN:-node}"
+
+if [[ -z "${ENV_FILE:-}" ]]; then
+  if [[ -f "$SERVICE_DIR/shared/.env" ]]; then
+    ENV_FILE="$SERVICE_DIR/shared/.env"
+  else
+    ENV_FILE="$SERVICE_DIR/.env"
+  fi
+fi
 
 WORK_DIR=""
 
@@ -37,7 +44,7 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-for command_name in flock pg_dump pg_restore tar sha256sum; do
+for command_name in flock pg_dump pg_restore realpath tar sha256sum; do
   command -v "$command_name" >/dev/null 2>&1 || die "缺少命令：$command_name"
 done
 
@@ -88,7 +95,10 @@ read_required_env DB_USER
 read_required_env DB_PASSWORD
 read_optional_env UPLOAD_DIR "$SERVICE_DIR/shared/uploads"
 
-[[ "$UPLOAD_DIR" = /* ]] || die "生产环境 UPLOAD_DIR 必须是绝对路径：$UPLOAD_DIR"
+if [[ "$UPLOAD_DIR" != /* ]]; then
+  UPLOAD_DIR="$SERVICE_DIR/$UPLOAD_DIR"
+fi
+UPLOAD_DIR="$(realpath --canonicalize-missing -- "$UPLOAD_DIR")"
 [[ -d "$UPLOAD_DIR" ]] || die "上传目录不存在：$UPLOAD_DIR"
 
 STAMP="$(date +%Y%m%d-%H%M%S)"
