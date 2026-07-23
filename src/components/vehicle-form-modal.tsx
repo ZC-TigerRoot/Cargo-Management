@@ -110,7 +110,7 @@ export default function VehicleFormModal({ defaultType = "overseas", initial, on
           <legend>车辆与批次</legend>
           <div className="form-grid">
             <label>业务类型<select name="type" value={type} onChange={event => setType(event.target.value as BusinessType)}><option value="overseas">海外保税仓</option><option value="domestic">国内仓储</option></select></label>
-            <label>车架号<input name="vin" maxLength={100} defaultValue={value("vin")} placeholder="可稍后补充（不限 17 位）" /></label>
+            <label>车架号<input name="vin" maxLength={100} defaultValue={value("vin")} /></label>
             <label>车型<input name="model" defaultValue={value("model")} /></label>
             {type === "domestic" && <label>品牌<input name="brand" defaultValue={value("brand")} /></label>}
             {type === "domestic" && <label>生产商<input name="manufacturer" defaultValue={value("manufacturer")} /></label>}
