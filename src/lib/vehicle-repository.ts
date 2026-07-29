@@ -5,7 +5,7 @@ import { prisma } from "./prisma";
 import { vehicleScalarData } from "./vehicle-persistence";
 import { vehicleStatusCodes, vehicleStatusNames } from "./vehicle-status";
 import type { z } from "zod";
-import type { vehiclePayload, vehicleUpdateInput } from "./validators";
+import { vehiclePayload, type vehicleUpdateInput } from "./validators";
 
 export const vehicleInclude = {
   batch: true,
@@ -22,12 +22,51 @@ export const vehicleInclude = {
 
 export type VehicleWithRelations = Prisma.VehicleGetPayload<{ include: typeof vehicleInclude }>;
 export type VehiclePayload = z.infer<typeof vehiclePayload>;
-export type VehicleUpdatePayload = Omit<z.infer<typeof vehicleUpdateInput>, "id" | "version">;
+type ParsedVehicleUpdate = z.infer<typeof vehicleUpdateInput>;
+export type VehicleUpdatePayload = VehiclePayload & Partial<Pick<ParsedVehicleUpdate, "status" | "statusReason">>;
 export type MutationContext = { actorId?: string; ip?: string };
 
 export class VersionConflictError extends Error {
   constructor() {
     super("车辆记录已被其他用户更新，请刷新后重试");
+  }
+}
+
+export function businessBatchSnapshot(batch: {
+  id: string;
+  type: string;
+  referenceNo: string;
+  portOfLoad?: string | null;
+  portOfDischarge?: string | null;
+  vesselVoyage?: string | null;
+  etd?: Date | null;
+  eta?: Date | null;
+  manufacturer?: string | null;
+} | null | undefined) {
+  if (!batch) return null;
+  return JSON.stringify([
+    batch.id,
+    batch.type,
+    batch.referenceNo,
+    batch.portOfLoad ?? null,
+    batch.portOfDischarge ?? null,
+    batch.vesselVoyage ?? null,
+    batch.etd?.toISOString() ?? null,
+    batch.eta?.toISOString() ?? null,
+    batch.manufacturer ?? null,
+  ]);
+}
+
+function isTransactionConflict(error: unknown) {
+  return Boolean(error && typeof error === "object" && "code" in error && error.code === "P2034");
+}
+
+async function serializableTransaction<T>(callback: (tx: Prisma.TransactionClient) => Promise<T>) {
+  try {
+    return await prisma.$transaction(callback, { isolationLevel: "Serializable" });
+  } catch (error) {
+    if (isTransactionConflict(error)) throw new VersionConflictError();
+    throw error;
   }
 }
 
@@ -205,7 +244,12 @@ function expectedAutoStatus(vehicle: VehicleWithRelations, data: StatusInference
   return inferred;
 }
 
-async function upsertRelations(tx: Prisma.TransactionClient, data: VehiclePayload, context: MutationContext) {
+async function upsertRelations(
+  tx: Prisma.TransactionClient,
+  data: VehiclePayload,
+  context: MutationContext,
+  expectedDestinationBatchSnapshot?: string | null,
+) {
   const type = data.type === "overseas" ? "OVERSEAS" : "DOMESTIC";
   const [batchBefore, customerBefore, warehouseBefore] = await Promise.all([
     data.referenceNo ? tx.businessBatch.findUnique({ where: { type_referenceNo: { type, referenceNo: data.referenceNo } } }) : null,
@@ -214,6 +258,10 @@ async function upsertRelations(tx: Prisma.TransactionClient, data: VehiclePayloa
       ? tx.warehouse.findUnique({ where: { name_location: { name: data.warehouse, location: data.warehouseLocation } } })
       : null,
   ]);
+  if (expectedDestinationBatchSnapshot !== undefined && businessBatchSnapshot(batchBefore) !== expectedDestinationBatchSnapshot) {
+    throw new VersionConflictError();
+  }
+  const missingBatchValue = expectedDestinationBatchSnapshot === undefined ? null : undefined;
   const [batch, customer, warehouse] = await Promise.all([
     data.referenceNo ? tx.businessBatch.upsert({
       where: { type_referenceNo: { type, referenceNo: data.referenceNo } },
@@ -228,12 +276,12 @@ async function upsertRelations(tx: Prisma.TransactionClient, data: VehiclePayloa
         manufacturer: data.manufacturer,
       },
       update: {
-        portOfLoad: data.portOfLoad ?? null,
-        portOfDischarge: data.portOfDischarge ?? null,
-        vesselVoyage: data.vesselVoyage ?? null,
-        etd: data.etd ? new Date(data.etd) : null,
-        eta: data.eta ? new Date(data.eta) : null,
-        manufacturer: data.manufacturer ?? null,
+        portOfLoad: data.portOfLoad ?? missingBatchValue,
+        portOfDischarge: data.portOfDischarge ?? missingBatchValue,
+        vesselVoyage: data.vesselVoyage ?? missingBatchValue,
+        etd: data.etd ? new Date(data.etd) : missingBatchValue,
+        eta: data.eta ? new Date(data.eta) : missingBatchValue,
+        manufacturer: data.manufacturer ?? missingBatchValue,
       },
     }) : null,
     data.customer ? tx.customer.upsert({ where: { name: data.customer }, create: { name: data.customer }, update: {} }) : null,
@@ -309,15 +357,20 @@ function auditSnapshot(record: VehicleRecord): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(snapshot)) as Prisma.InputJsonValue;
 }
 
-export async function createVehicle(data: VehiclePayload, idempotencyKey: string, context: MutationContext = {}) {
-  return prisma.$transaction(async tx => {
+export async function createVehicle(
+  data: VehiclePayload,
+  idempotencyKey: string,
+  context: MutationContext = {},
+  expectedDestinationBatchSnapshot?: string | null,
+) {
+  return serializableTransaction(async tx => {
     const previous = await tx.inventoryEvent.findUnique({
       where: { idempotencyKey },
       include: { vehicle: { include: vehicleInclude } },
     });
     if (previous) return previous.vehicle;
 
-    const { batch, customer, warehouse } = await upsertRelations(tx, data, context);
+    const { batch, customer, warehouse } = await upsertRelations(tx, data, context, expectedDestinationBatchSnapshot);
     const vehicle = await tx.vehicle.create({
       data: {
         ...vehicleScalarData(data),
@@ -339,6 +392,11 @@ export async function createVehicle(data: VehiclePayload, idempotencyKey: string
     });
     return created;
   });
+}
+
+function mergeImportPayload(before: VehicleRecord, data: VehiclePayload) {
+  const supplied = Object.fromEntries(Object.entries(data).filter(([, value]) => value !== undefined));
+  return vehiclePayload.parse({ ...before, ...supplied, warehouseTimezone: CHINA_TIME_ZONE });
 }
 
 function sameDate(left?: string, right?: string) {
@@ -381,12 +439,20 @@ async function appendDateCorrections(tx: Prisma.TransactionClient, existing: Veh
   }
 }
 
-export async function updateVehicle(id: string, expectedVersion: number, data: VehicleUpdatePayload, context: MutationContext = {}) {
-  return prisma.$transaction(async tx => {
+async function persistVehicleUpdate(
+  id: string,
+  expectedVersion: number,
+  submitted: VehicleUpdatePayload,
+  context: MutationContext,
+  preserveMissing: boolean,
+  expectedDestinationBatchSnapshot?: string | null,
+) {
+  return serializableTransaction(async tx => {
     const existing = await tx.vehicle.findUniqueOrThrow({ where: { id }, include: vehicleInclude });
     if (existing.version !== expectedVersion) throw new VersionConflictError();
     const before = toVehicleRecord(existing);
-    const { batch, customer, warehouse } = await upsertRelations(tx, data, context);
+    const data: VehicleUpdatePayload = preserveMissing ? mergeImportPayload(before, submitted) : submitted;
+    const { batch, customer, warehouse } = await upsertRelations(tx, data, context, expectedDestinationBatchSnapshot);
     // A manual status choice always wins. Otherwise recompute from the
     // submitted data, but only when the current status still matches what the
     // rules infer from the existing data: a status set by hand diverges from
@@ -445,6 +511,20 @@ export async function updateVehicle(id: string, expectedVersion: number, data: V
     });
     return updated;
   });
+}
+
+export async function updateVehicle(id: string, expectedVersion: number, data: VehicleUpdatePayload, context: MutationContext = {}) {
+  return persistVehicleUpdate(id, expectedVersion, data, context, false);
+}
+
+export async function updateVehicleFromImport(
+  id: string,
+  expectedVersion: number,
+  data: VehiclePayload,
+  context: MutationContext = {},
+  expectedDestinationBatchSnapshot?: string | null,
+) {
+  return persistVehicleUpdate(id, expectedVersion, data, context, true, expectedDestinationBatchSnapshot);
 }
 
 async function deleteVehiclesInTransaction(tx: Prisma.TransactionClient, ids: string[], context: MutationContext) {

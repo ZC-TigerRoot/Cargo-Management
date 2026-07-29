@@ -8,10 +8,11 @@ import {
   MAX_IMPORT_FILE_SIZE,
   publicCheckResult,
 } from "@/lib/excel-import";
+import { signImportPreview } from "@/lib/import-preview";
 
 export async function POST(req: NextRequest) {
   try {
-    await requireUser("create");
+    const user = await requireUser("create");
     assertSameOrigin(req);
     const contentLengthHeader = req.headers.get("content-length");
     if (!contentLengthHeader) return NextResponse.json({ error: "LENGTH_REQUIRED", message: "上传请求必须包含 Content-Length" }, { status: 411 });
@@ -21,7 +22,8 @@ export async function POST(req: NextRequest) {
     const form = await req.formData();
     const file = form.get("file");
     assertImportFile(file);
-    return NextResponse.json({ data: publicCheckResult(await checkWorkbook(file)) });
+    const checked = await checkWorkbook(file);
+    return NextResponse.json({ data: { ...publicCheckResult(checked), previewToken: await signImportPreview(checked.rows, user.id) } });
   } catch (error) {
     if (error instanceof AuthorizationError) return NextResponse.json({ error: error.status === 401 ? "UNAUTHENTICATED" : "FORBIDDEN", message: error.message }, { status: error.status });
     if (error instanceof ImportWorkbookError) return NextResponse.json({ error: error.code, message: error.message }, { status: error.status });

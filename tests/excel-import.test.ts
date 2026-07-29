@@ -2,9 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as XLSX from "xlsx";
 
 const findVehicles = vi.hoisted(() => vi.fn());
+const findBatches = vi.hoisted(() => vi.fn());
 
 vi.mock("server-only", () => ({}));
-vi.mock("../src/lib/prisma", () => ({ prisma: { vehicle: { findMany: findVehicles } } }));
+vi.mock("../src/lib/prisma", () => ({ prisma: { vehicle: { findMany: findVehicles }, businessBatch: { findMany: findBatches } } }));
 
 import {
   assertImportFile,
@@ -26,6 +27,7 @@ function workbookFile(headers: readonly string[], rows: Record<string, unknown>[
 beforeEach(() => {
   vi.clearAllMocks();
   findVehicles.mockResolvedValue([]);
+  findBatches.mockResolvedValue([]);
 });
 
 describe("Excel 导入预校验", () => {
@@ -43,6 +45,17 @@ describe("Excel 导入预校验", () => {
   });
 
   it("将有效国内仓工作簿转换成规范车辆数据", async () => {
+    findBatches.mockResolvedValueOnce([{
+      id: "batch-1",
+      type: "DOMESTIC",
+      referenceNo: "PO-001",
+      portOfLoad: null,
+      portOfDischarge: null,
+      vesselVoyage: null,
+      etd: null,
+      eta: null,
+      manufacturer: "测试生产商",
+    }]);
     const file = workbookFile(domesticExcelHeaders, [{
       车架号: "test-vin-001",
       车型: "测试车型",
@@ -64,6 +77,8 @@ describe("Excel 导入预校验", () => {
       inboundAmount: "1200.50",
       outboundAmount: "1300",
     });
+    expect(result.rows[0]).toMatchObject({ destinationReferenceNo: "PO-001", destinationBatchKey: '["DOMESTIC","PO-001"]' });
+    expect(result.rows[0].destinationBatchSnapshot).toEqual(expect.any(String));
     expect(findVehicles).toHaveBeenCalledWith(expect.objectContaining({ where: { vin: { in: ["TEST-VIN-001"] } } }));
   });
 
@@ -90,18 +105,41 @@ describe("Excel 导入预校验", () => {
     expect(result.errors[2].errors).toContain("缺少车架号");
   });
 
-  it("区分数据库内重复车架号和批次冲突，并隐藏内部行数据", async () => {
+  it("将同批次已有车辆识别为更新，并拒绝批次冲突且隐藏内部行数据", async () => {
     findVehicles.mockResolvedValueOnce([
-      { vin: "VIN-SAME", batch: { type: "DOMESTIC", referenceNo: "PO-001" } },
-      { vin: "VIN-CONFLICT", batch: { type: "OVERSEAS", referenceNo: "BL-OLD" } },
+      { id: "vehicle-same", version: 3, vin: "VIN-SAME", extra: {}, batch: { id: "batch-1", type: "DOMESTIC", referenceNo: "PO-001" } },
+      { id: "vehicle-conflict", version: 2, vin: "VIN-CONFLICT", extra: {}, batch: { id: "batch-2", type: "OVERSEAS", referenceNo: "BL-OLD" } },
     ]);
     const result = await checkWorkbook(workbookFile(domesticExcelHeaders, [
       { 车架号: "VIN-SAME", "PO#": "PO-001" },
       { 车架号: "VIN-CONFLICT", "PO#": "PO-002" },
     ]));
 
-    expect(result.errors[0].errors).toContain("车架号已存在");
-    expect(result.errors[1].errors).toContain("车架号已存在且业务批次冲突");
+    expect(result).toMatchObject({ validRows: 1, invalidRows: 1, createRows: 0, updateRows: 1 });
+    expect(result.rows[0].existing).toMatchObject({ id: "vehicle-same", version: 3 });
+    expect(result.errors[0]).toMatchObject({ vin: "VIN-CONFLICT", errors: ["车架号已存在且业务批次冲突"] });
     expect(publicCheckResult(result)).not.toHaveProperty("rows");
+  });
+
+  it("使用已有字段预校验增量更新后的时间顺序", async () => {
+    findVehicles.mockResolvedValueOnce([{
+      id: "vehicle-1",
+      version: 2,
+      vin: "VIN-001",
+      extra: {},
+      inboundAt: null,
+      outboundAt: new Date("2026-07-05T00:00:00.000Z"),
+      warehouse: null,
+      batch: { id: "batch-1", type: "DOMESTIC", referenceNo: "PO-001", etd: null, eta: null },
+    }]);
+
+    const result = await checkWorkbook(workbookFile(domesticExcelHeaders, [{
+      车架号: "VIN-001",
+      "PO#": "PO-001",
+      入仓库时间: "2026-07-10",
+    }]));
+
+    expect(result).toMatchObject({ validRows: 0, invalidRows: 1, createRows: 0, updateRows: 0 });
+    expect(result.errors[0].errors).toContain("入库时间晚于实际出库时间");
   });
 });

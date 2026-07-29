@@ -3,7 +3,7 @@ import "server-only";
 import * as XLSX from "xlsx";
 import { prisma } from "./prisma";
 import { vehiclePayload } from "./validators";
-import type { VehiclePayload } from "./vehicle-repository";
+import { businessBatchSnapshot, type VehiclePayload } from "./vehicle-repository";
 import { domesticExcelHeaders, overseasExcelHeaders } from "./vehicle-excel";
 
 export const MAX_IMPORT_FILE_SIZE = 10 * 1024 * 1024;
@@ -16,13 +16,22 @@ export class ImportWorkbookError extends Error {
 }
 
 export type ImportRowIssue = { row: number; vin?: string; errors: string[] };
-export type CheckedImportRow = ImportRowIssue & { referenceNo?: string; payload: VehiclePayload };
+export type CheckedImportRow = ImportRowIssue & {
+  referenceNo?: string;
+  destinationReferenceNo?: string;
+  destinationBatchKey?: string;
+  destinationBatchSnapshot?: string | null;
+  payload: VehiclePayload;
+  existing?: { id: string; version: number; warehouse?: string; warehouseLocation?: string };
+};
 export type CheckedWorkbook = {
   fileName: string;
   businessType: "海外仓" | "国内仓";
   totalRows: number;
   validRows: number;
   invalidRows: number;
+  createRows: number;
+  updateRows: number;
   missingHeaders: string[];
   ignoredColumns: string[];
   errors: ImportRowIssue[];
@@ -50,6 +59,16 @@ function cellDate(value: unknown) {
 
 function iso(value: unknown) {
   return cellDate(value)?.toISOString();
+}
+
+function extraText(value: unknown, key: string) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const candidate = (value as Record<string, unknown>)[key];
+  return typeof candidate === "string" && candidate ? candidate : undefined;
+}
+
+function batchKey(type: "OVERSEAS" | "DOMESTIC", referenceNo: string) {
+  return JSON.stringify([type, referenceNo]);
 }
 
 function payloadFor(row: Record<string, unknown>, overseas: boolean): VehiclePayload {
@@ -152,32 +171,101 @@ export async function checkWorkbook(file: File): Promise<CheckedWorkbook> {
       errors.push("字段内容无法转换为车辆数据");
       payload = vehiclePayload.parse({ type: overseas ? "overseas" : "domestic", warehouseTimezone: "Asia/Shanghai" });
     }
-    return { row: index + 2, vin, referenceNo: text(row[overseas ? "提单号" : "PO#"]), errors, payload };
+    const referenceNo = text(row[overseas ? "提单号" : "PO#"]);
+    return { row: index + 2, vin, referenceNo, destinationReferenceNo: referenceNo, errors, payload };
   });
 
+  const expectedType = overseas ? "OVERSEAS" : "DOMESTIC";
   const vins = checked.flatMap(item => item.vin ? [item.vin] : []);
   const existing = vins.length ? await prisma.vehicle.findMany({
     where: { vin: { in: vins } },
-    select: { vin: true, batch: { select: { type: true, referenceNo: true } } },
+    select: {
+      id: true,
+      version: true,
+      vin: true,
+      extra: true,
+      inboundAt: true,
+      outboundAt: true,
+      warehouse: { select: { name: true, location: true } },
+      batch: {
+        select: {
+          id: true,
+          type: true,
+          referenceNo: true,
+          portOfLoad: true,
+          portOfDischarge: true,
+          vesselVoyage: true,
+          etd: true,
+          eta: true,
+          manufacturer: true,
+        },
+      },
+    },
   }) : [];
   const existingByVin = new Map(existing.flatMap(vehicle => vehicle.vin ? [[vehicle.vin.toUpperCase(), vehicle] as const] : []));
   for (const item of checked) {
     if (!item.vin) continue;
     const vehicle = existingByVin.get(item.vin);
     if (!vehicle) continue;
-    const expectedType = overseas ? "OVERSEAS" : "DOMESTIC";
-    item.errors.push(vehicle.batch && (vehicle.batch.type !== expectedType || vehicle.batch.referenceNo !== item.referenceNo)
-      ? "车架号已存在且业务批次冲突"
-      : "车架号已存在");
+    const existingType = vehicle.batch?.type
+      ?? (extraText(vehicle.extra, "businessType") === "domestic" ? "DOMESTIC" : extraText(vehicle.extra, "businessType") === "overseas" ? "OVERSEAS" : undefined);
+    const existingReferenceNo = vehicle.batch?.referenceNo ?? extraText(vehicle.extra, "referenceNo");
+    item.destinationReferenceNo ??= existingReferenceNo;
+    item.existing = {
+      id: vehicle.id,
+      version: vehicle.version,
+      warehouse: vehicle.warehouse?.name ?? extraText(vehicle.extra, "warehouse"),
+      warehouseLocation: vehicle.warehouse?.location ?? extraText(vehicle.extra, "warehouseLocation"),
+    };
+    if ((existingType && existingType !== expectedType) || (item.referenceNo && existingReferenceNo && item.referenceNo !== existingReferenceNo)) {
+      item.errors.push("车架号已存在且业务批次冲突");
+      continue;
+    }
+    const inboundAt = item.payload.inboundAt ?? vehicle.inboundAt?.toISOString();
+    const outboundAt = item.payload.outboundAt ?? vehicle.outboundAt?.toISOString();
+    if (inboundAt && outboundAt && new Date(inboundAt) > new Date(outboundAt) && !item.errors.includes("入库时间晚于实际出库时间")) {
+      item.errors.push("入库时间晚于实际出库时间");
+    }
+    const etd = item.payload.etd ?? vehicle.batch?.etd?.toISOString() ?? extraText(vehicle.extra, "etd");
+    const eta = item.payload.eta ?? vehicle.batch?.eta?.toISOString() ?? extraText(vehicle.extra, "eta");
+    if (etd && eta && new Date(etd) > new Date(eta) && !item.errors.includes("ETD 晚于 ETA")) item.errors.push("ETD 晚于 ETA");
+  }
+
+  const destinationReferences = [...new Set(checked.flatMap(item => item.destinationReferenceNo ? [item.destinationReferenceNo] : []))];
+  const destinationBatches = destinationReferences.length ? await prisma.businessBatch.findMany({
+    where: { type: expectedType, referenceNo: { in: destinationReferences } },
+    select: {
+      id: true,
+      type: true,
+      referenceNo: true,
+      portOfLoad: true,
+      portOfDischarge: true,
+      vesselVoyage: true,
+      etd: true,
+      eta: true,
+      manufacturer: true,
+    },
+  }) : [];
+  const destinationByKey = new Map(destinationBatches.map(batch => [batchKey(batch.type, batch.referenceNo), batch]));
+  for (const item of checked) {
+    if (!item.destinationReferenceNo) {
+      item.destinationBatchSnapshot = null;
+      continue;
+    }
+    item.destinationBatchKey = batchKey(expectedType, item.destinationReferenceNo);
+    item.destinationBatchSnapshot = businessBatchSnapshot(destinationByKey.get(item.destinationBatchKey));
   }
 
   const errors = checked.filter(item => item.errors.length).map(({ row, vin, errors: rowErrors }) => ({ row, vin, errors: rowErrors }));
+  const validRows = checked.filter(item => !item.errors.length);
   return {
     fileName: file.name,
     businessType: overseas ? "海外仓" : "国内仓",
     totalRows: sourceRows.length,
-    validRows: sourceRows.length - errors.length,
+    validRows: validRows.length,
     invalidRows: errors.length,
+    createRows: validRows.filter(item => !item.existing).length,
+    updateRows: validRows.filter(item => item.existing).length,
     missingHeaders,
     ignoredColumns,
     errors,

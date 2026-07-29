@@ -7,8 +7,9 @@ import { Download, FileSpreadsheet, Menu, Plus, Search, UploadCloud } from "luci
 import SideNav from "./side-nav";
 import VehicleFilterBar from "./vehicle-filter-bar";
 import VehicleFormModal from "./vehicle-form-modal";
+import VehiclePivotReport from "./vehicle-pivot-report";
 import VehicleTable from "./vehicle-table";
-import { can, inventoryDays, roleLabels, type BusinessType, type VehicleRecord } from "@/lib/domain";
+import { can, roleLabels, type BusinessType, type VehicleRecord } from "@/lib/domain";
 import { useVehicleRecords } from "@/lib/use-vehicle-records";
 import { useSession } from "@/lib/use-session";
 import { CHINA_TIME_ZONE, chinaDateTime, localInputValue, zonedLocalToIso } from "@/lib/datetime";
@@ -22,7 +23,7 @@ const meta: Record<Kind, { eyebrow: string; title: string; description: string }
   domestic: { eyebrow: "国内业务", title: "国内仓储", description: "按 PO 管理车辆入仓、放车、出库与签收" },
   pickups: { eyebrow: "现场协同", title: "提货任务", description: "生成司机二维码并跟进提车签收" },
   imports: { eyebrow: "数据迁移", title: "导入记录", description: "预校验 Excel 并处理异常数据" },
-  reports: { eyebrow: "分析中心", title: "库存报表", description: "查看库存账龄、仓库分布与出入库趋势" },
+  reports: { eyebrow: "分析中心", title: "库存报表", description: "按客户、仓库与放车进度查看实时库存透视统计" },
   settings: { eyebrow: "系统管理", title: "基础设置", description: "查看仓库与客户主数据" },
 };
 
@@ -33,7 +34,7 @@ export default function ModulePage({ kind }: { kind: Kind }) {
   const { user } = useSession();
   const m = meta[kind];
   const type: BusinessType | undefined = kind === "overseas" ? "overseas" : kind === "domestic" ? "domestic" : undefined;
-  const { records, saveRecord, removeRecord, loadError } = useVehicleRecords();
+  const { records, saveRecord, removeRecord, loading, loadError } = useVehicleRecords();
   const scopedRecords = useMemo(() => type ? records.filter(vehicle => vehicle.type === type) : records, [records, type]);
   const effectiveFilters = useMemo(() => type ? { ...filters, type } : filters, [filters, type]);
   const rows = useMemo(() => filterVehicleRecords(scopedRecords, effectiveFilters), [effectiveFilters, scopedRecords]);
@@ -54,11 +55,12 @@ export default function ModulePage({ kind }: { kind: Kind }) {
       </header>
       <section className="content">
         <div className="module-heading"><div><p className="eyebrow">{m.eyebrow}</p><h2>{m.title}</h2><p>{m.description}</p></div></div>
-        {recordModule && loadError && <p className="form-error">{loadError}</p>}
+        {(recordModule || kind === "reports") && loadError && <p className="form-error">{loadError}</p>}
         {recordModule && <VehicleModule records={scopedRecords} rows={rows} filters={filters} setFilters={setFilters} lockedType={type} canDelete={can(role, "delete")} onDeleted={removeRecord} />}
         {kind === "pickups" && <PickupModule records={records} canCreate={can(role, "create")} />}
         {kind === "imports" && <ImportModule />}
-        {kind === "reports" && <><article className="panel report-filter-panel"><VehicleFilterBar records={records} filters={filters} onChange={setFilters}/></article><ReportModule records={rows} /></>}
+        {kind === "reports" && loading && <article className="panel report-loading">正在读取车辆数据…</article>}
+        {kind === "reports" && !loading && !loadError && <><article className="panel report-filter-panel"><VehicleFilterBar records={records} filters={filters} onChange={setFilters}/></article><VehiclePivotReport records={rows}/></>}
         {kind === "settings" && <SettingsModule canEditPublicUrl={can(role, "managePublicUrl")} />}
       </section>
     </main>
@@ -171,7 +173,7 @@ function PickupModule({ records, canCreate }: { records: VehicleRecord[]; canCre
   </div>;
 }
 
-type PreviewResult = { fileName: string; businessType: string; totalRows: number; validRows: number; invalidRows: number; missingHeaders: string[]; ignoredColumns: string[]; importedRows?: number; failedRows?: number; errors: { row: number; vin?: unknown; errors: string[] }[] };
+type PreviewResult = { fileName: string; businessType: string; totalRows: number; validRows: number; invalidRows: number; createRows: number; updateRows: number; previewToken?: string; missingHeaders: string[]; ignoredColumns: string[]; importedRows?: number; createdRows?: number; updatedRows?: number; failedRows?: number; errors: { row: number; vin?: unknown; errors: string[] }[] };
 
 function ImportModule() {
   const [file, setFile] = useState<File>();
@@ -192,28 +194,22 @@ function ImportModule() {
     finally { setLoading(false); }
   }
   async function importRows() {
-    if (!file || !result?.validRows) return;
+    if (!file || !result?.validRows || !result.previewToken) return;
     setLoading(true); setError("");
-    const body = new FormData(); body.set("file", file);
+    const body = new FormData(); body.set("file", file); body.set("previewToken", result.previewToken);
     try {
       const response = await fetch("/api/v1/import", { method: "POST", body });
       const json = await response.json();
-      if (!response.ok) throw new Error(json.message || "导入失败");
+      if (!response.ok) {
+        if (response.status === 409 && json.data) { setResult(json.data); setError(json.message || "部分车辆数据已变化，请重新预校验"); return; }
+        if (response.status === 409) setResult(undefined);
+        throw new Error(json.message || "导入失败");
+      }
       setResult(json.data);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "导入失败"); }
     finally { setLoading(false); }
   }
-  return <article className="panel import-box"><UploadCloud/><h3>上传 Excel 进行预校验</h3><p>自动识别海外仓或国内仓，缺少的标准列和单元格按空值处理，文件最大 10 MB</p><form onSubmit={preview}><label className="secondary-button">选择文件<input type="file" accept=".xlsx,.xls" onChange={event => { setFile(event.target.files?.[0]); setResult(undefined); setError(""); }}/></label>{file && <button className="primary-button" disabled={loading}>{loading ? "处理中…" : "提交预校验"}</button>}</form>{file && <div className="file-selected"><FileSpreadsheet/>已选择 {file.name}</div>}{error && <p className="form-error">{error}</p>}{result && <div className="import-result"><h4>{result.businessType}：{result.validRows} / {result.totalRows} 行可导入</h4>{result.importedRows !== undefined && <p className="import-success">已成功导入 {result.importedRows} 行；{result.failedRows || 0} 行未导入。</p>}{result.missingHeaders.length > 0 && <p>以下缺失列已按空值处理：{result.missingHeaders.join("、")}</p>}{result.ignoredColumns.length > 0 && <p>以下内容不会导入：{result.ignoredColumns.join("、")}。</p>}{result.errors.length > 0 && <div className="import-errors"><b>无法导入的行与原因</b>{result.errors.map(item => <p key={`${item.row}-${String(item.vin)}`}>第 {item.row} 行（{String(item.vin || "无车架号")}）：{item.errors.join("；")}</p>)}</div>}{result.importedRows === undefined && <button type="button" className="primary-button import-button" disabled={loading || result.validRows === 0} onClick={importRows}>{loading ? "导入中…" : `导入 ${result.validRows} 行有效数据`}</button>}</div>}</article>;
-}
-
-function ReportModule({ records }: { records: VehicleRecord[] }) {
-  const inStorage = records.filter(vehicle => !vehicle.outboundAt && vehicle.status !== "待入库");
-  const days = inStorage.map(vehicle => inventoryDays(vehicle.inboundAt));
-  const average = days.length ? (days.reduce((sum, value) => sum + value, 0) / days.length).toFixed(1) : "0.0";
-  const buckets = [["0–7天", 0, 7], ["8–15天", 8, 15], ["16–30天", 16, 30], ["30天以上", 31, Infinity]] as const;
-  const counts = buckets.map(([name, min, max]) => ({ name, count: days.filter(value => value >= min && value <= max).length }));
-  const max = Math.max(1, ...counts.map(item => item.count));
-  return <div className="report-grid"><article className="panel report-card"><span>实时在库/在途</span><strong>{inStorage.length}</strong><p>按当前车辆台账计算</p></article><article className="panel report-card"><span>平均库存天数</span><strong>{average}</strong><p>仅统计未出库车辆</p></article><article className="panel report-card"><span>30 天以上</span><strong>{counts[3].count}</strong><p>需要业务跟进</p></article><article className="panel age-panel report-wide"><h3>库存账龄分布</h3><div className="age-bars">{counts.map(item => <div key={item.name}><span>{item.name}</span><div><i className="green" style={{ width: `${item.count / max * 100}%` }}/></div><b>{item.count}</b></div>)}</div></article></div>;
+  return <article className="panel import-box"><UploadCloud/><h3>上传 Excel 进行预校验</h3><p>已有车辆按车架号增量更新，只覆盖有值的单元格；文件最大 10 MB</p><form onSubmit={preview}><label className="secondary-button">选择文件<input type="file" accept=".xlsx,.xls" onChange={event => { setFile(event.target.files?.[0]); setResult(undefined); setError(""); }}/></label>{file && <button className="primary-button" disabled={loading}>{loading ? "处理中…" : "提交预校验"}</button>}</form>{file && <div className="file-selected"><FileSpreadsheet/>已选择 {file.name}</div>}{error && <p className="form-error">{error}</p>}{result && <div className="import-result"><h4>{result.businessType}：{result.validRows} / {result.totalRows} 行可处理</h4><p>其中新增 {result.createRows} 行，更新 {result.updateRows} 行。</p>{result.importedRows !== undefined && <p className="import-success">已成功新增 {result.createdRows ?? 0} 行、更新 {result.updatedRows ?? 0} 行；{result.failedRows || 0} 行未处理。</p>}{result.missingHeaders.length > 0 && <p>以下缺失列不会导入，更新已有车辆时保留原值：{result.missingHeaders.join("、")}</p>}{result.ignoredColumns.length > 0 && <p>以下内容不会导入：{result.ignoredColumns.join("、")}。</p>}{result.errors.length > 0 && <div className="import-errors"><b>无法处理的行与原因</b>{result.errors.map(item => <p key={`${item.row}-${String(item.vin)}`}>第 {item.row} 行（{String(item.vin || "无车架号")}）：{item.errors.join("；")}</p>)}</div>}{result.importedRows === undefined && <button type="button" className="primary-button import-button" disabled={loading || result.validRows === 0} onClick={importRows}>{loading ? "处理中…" : `处理 ${result.validRows} 行有效数据`}</button>}</div>}</article>;
 }
 
 type SettingsData = { publicBaseUrl: string; warehouses: { id: string; name: string; location: string; bonded: boolean }[]; customers: { id: string; name: string; vehicleCount: number }[] };

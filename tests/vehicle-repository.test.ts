@@ -9,12 +9,14 @@ const prisma = vi.hoisted(() => ({
 vi.mock("../src/lib/prisma", () => ({ prisma }));
 
 import {
+  businessBatchSnapshot,
   createVehicle,
   deleteVehicles,
   listVehicleAuditTrail,
   listVehicles,
   toVehicleRecord,
   updateVehicle,
+  updateVehicleFromImport,
   VersionConflictError,
   type VehiclePayload,
   type VehicleUpdatePayload,
@@ -198,6 +200,127 @@ describe("车辆仓储映射与并发保护", () => {
     prisma.$transaction.mockImplementationOnce(async (callback: (client: typeof tx) => unknown) => callback(tx));
 
     await expect(updateVehicle("vehicle-1", 1, minimalPayload as VehicleUpdatePayload)).rejects.toBeInstanceOf(VersionConflictError);
+  });
+
+  it("Excel 更新只覆盖有值字段并按合并后的数据推进状态", async () => {
+    const existing = vehicle({
+      status: "IN_STOCK",
+      inboundAt: new Date("2026-07-01T00:00:00.000Z"),
+      model: "原车型",
+      notes: "原备注",
+      extra: { businessType: "domestic" },
+    });
+    const updated = vehicle({ version: 2, status: "PENDING_RELEASE" });
+    const tx = {
+      vehicle: {
+        findUniqueOrThrow: vi.fn().mockResolvedValueOnce(existing).mockResolvedValueOnce(updated),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      },
+      inventoryEvent: { create: vi.fn().mockResolvedValue({}) },
+      auditLog: { create: vi.fn().mockResolvedValue({}) },
+    };
+    prisma.$transaction.mockImplementationOnce(async (callback: (client: typeof tx) => unknown) => callback(tx));
+
+    await expect(updateVehicleFromImport("vehicle-1", 1, {
+      ...minimalPayload,
+      merchantReleaseAt: "2026-07-03T00:00:00.000Z",
+    })).resolves.toBe(updated);
+
+    expect(tx.vehicle.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        model: "原车型",
+        notes: "原备注",
+        inboundAt: new Date("2026-07-01T00:00:00.000Z"),
+        status: "PENDING_RELEASE",
+      }),
+    }));
+  });
+
+  it("Excel 更新使用原值校验跨字段时间顺序", async () => {
+    const existing = vehicle({
+      status: "PENDING_RECEIPT",
+      outboundAt: new Date("2026-07-05T00:00:00.000Z"),
+      extra: { businessType: "domestic" },
+    });
+    const tx = { vehicle: { findUniqueOrThrow: vi.fn().mockResolvedValue(existing) } };
+    prisma.$transaction.mockImplementationOnce(async (callback: (client: typeof tx) => unknown) => callback(tx));
+
+    await expect(updateVehicleFromImport("vehicle-1", 1, {
+      ...minimalPayload,
+      inboundAt: "2026-07-10T00:00:00.000Z",
+    })).rejects.toThrow("实际出库时间不能早于入库时间");
+  });
+
+  it("Excel 更新拒绝覆盖预校验后变化的共享批次", async () => {
+    const existing = vehicle({
+      extra: { businessType: "domestic" },
+      batch: {
+        id: "batch-1",
+        type: "DOMESTIC",
+        referenceNo: "PO-001",
+        portOfLoad: null,
+        portOfDischarge: null,
+        vesselVoyage: null,
+        etd: new Date("2026-07-01T00:00:00.000Z"),
+        eta: null,
+        manufacturer: null,
+      },
+    });
+    const tx = {
+      vehicle: { findUniqueOrThrow: vi.fn().mockResolvedValue(existing) },
+      businessBatch: { findUnique: vi.fn().mockResolvedValue(existing.batch) },
+    };
+    prisma.$transaction.mockImplementationOnce(async (callback: (client: typeof tx) => unknown) => callback(tx));
+
+    await expect(updateVehicleFromImport(
+      "vehicle-1",
+      1,
+      { ...minimalPayload, referenceNo: "PO-001" },
+      {},
+      businessBatchSnapshot({ ...existing.batch!, etd: new Date("2026-06-30T00:00:00.000Z") }),
+    )).rejects.toBeInstanceOf(VersionConflictError);
+  });
+
+  it("Excel 新增车辆时不以空白字段清空已有批次主数据", async () => {
+    const existingBatch = {
+      id: "batch-1",
+      type: "DOMESTIC" as const,
+      referenceNo: "PO-001",
+      portOfLoad: null,
+      portOfDischarge: null,
+      vesselVoyage: null,
+      etd: null,
+      eta: null,
+      manufacturer: "原生产商",
+    };
+    const created = vehicle({ batch: existingBatch });
+    const tx = {
+      inventoryEvent: { findUnique: vi.fn().mockResolvedValue(null), create: vi.fn().mockResolvedValue({}), createMany: vi.fn() },
+      businessBatch: {
+        findUnique: vi.fn().mockResolvedValue(existingBatch),
+        upsert: vi.fn().mockResolvedValue(existingBatch),
+      },
+      vehicle: { create: vi.fn().mockResolvedValue({ id: "vehicle-1" }), findUniqueOrThrow: vi.fn().mockResolvedValue(created) },
+      auditLog: { create: vi.fn().mockResolvedValue({}) },
+    };
+    prisma.$transaction.mockImplementationOnce(async (callback: (client: typeof tx) => unknown) => callback(tx));
+
+    await createVehicle(
+      { ...minimalPayload, referenceNo: "PO-001", vin: "VIN-NEW" },
+      "excel:new-vehicle",
+      {},
+      businessBatchSnapshot(existingBatch),
+    );
+
+    expect(tx.businessBatch.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      update: expect.objectContaining({ manufacturer: undefined, etd: undefined, eta: undefined }),
+    }));
+  });
+
+  it("数据库串行化冲突转换为车辆版本冲突", async () => {
+    prisma.$transaction.mockRejectedValueOnce({ code: "P2034" });
+
+    await expect(updateVehicle("vehicle-1", 1, minimalPayload)).rejects.toBeInstanceOf(VersionConflictError);
   });
 
   it("状态变更使用乐观锁并记录异常事件", async () => {

@@ -9,24 +9,27 @@
       "data/uploads/**"
     ]
   },
+  "mcp": {
+    "chrome-devtools": {
+      "type": "local",
+      "command": ["npx", "-y", "chrome-devtools-mcp@latest", "--acceptInsecureCerts"],
+      "enabled": true
+    }
+  },
   "permission": {
     "external_directory": "ask",
     "bash": {
-      "*": "ask",
-      "git status*": "allow",
-      "git diff*": "allow",
-      "git log*": "allow",
-      "rg *": "allow",
-      "pnpm test*": "allow",
-      "pnpm lint*": "allow",
-      "pnpm exec tsc --noEmit*": "allow",
-      "pnpm build*": "allow",
+      "*": "allow",
+      "git commit*": "ask",
       "git push*": "ask",
       "ssh *": "ask",
+      "scp *": "ask",
       "rsync *": "ask",
+      "sudo *": "ask",
+      "rm *": "ask",
+      "docker compose down*": "ask",
       "pnpm db:deploy*": "ask",
-      "pnpm db:seed*": "ask",
-      "rm *": "ask"
+      "pnpm db:seed*": "ask"
     }
   }
 }
