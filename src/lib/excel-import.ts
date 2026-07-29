@@ -67,8 +67,8 @@ function extraText(value: unknown, key: string) {
   return typeof candidate === "string" && candidate ? candidate : undefined;
 }
 
-function batchKey(type: "OVERSEAS" | "DOMESTIC", referenceNo: string) {
-  return JSON.stringify([type, referenceNo]);
+function batchKey(type: "OVERSEAS" | "DOMESTIC", referenceNo: string, warehouse?: string, warehouseLocation?: string) {
+  return JSON.stringify([type, referenceNo, warehouse ?? null, warehouseLocation ?? null]);
 }
 
 function payloadFor(row: Record<string, unknown>, overseas: boolean): VehiclePayload {
@@ -192,6 +192,8 @@ export async function checkWorkbook(file: File): Promise<CheckedWorkbook> {
           id: true,
           type: true,
           referenceNo: true,
+          warehouseId: true,
+          warehouseKey: true,
           portOfLoad: true,
           portOfDischarge: true,
           vesselVoyage: true,
@@ -238,6 +240,9 @@ export async function checkWorkbook(file: File): Promise<CheckedWorkbook> {
       id: true,
       type: true,
       referenceNo: true,
+      warehouseId: true,
+      warehouseKey: true,
+      warehouse: { select: { name: true, location: true } },
       portOfLoad: true,
       portOfDischarge: true,
       vesselVoyage: true,
@@ -246,13 +251,18 @@ export async function checkWorkbook(file: File): Promise<CheckedWorkbook> {
       manufacturer: true,
     },
   }) : [];
-  const destinationByKey = new Map(destinationBatches.map(batch => [batchKey(batch.type, batch.referenceNo), batch]));
+  const destinationByKey = new Map(destinationBatches.map(batch => [
+    batchKey(batch.type, batch.referenceNo, batch.warehouse?.name, batch.warehouse?.location),
+    batch,
+  ]));
   for (const item of checked) {
     if (!item.destinationReferenceNo) {
       item.destinationBatchSnapshot = null;
       continue;
     }
-    item.destinationBatchKey = batchKey(expectedType, item.destinationReferenceNo);
+    const destinationWarehouse = item.payload.warehouse ?? item.existing?.warehouse;
+    const destinationWarehouseLocation = item.payload.warehouseLocation ?? item.existing?.warehouseLocation;
+    item.destinationBatchKey = batchKey(expectedType, item.destinationReferenceNo, destinationWarehouse, destinationWarehouseLocation);
     item.destinationBatchSnapshot = businessBatchSnapshot(destinationByKey.get(item.destinationBatchKey));
   }
 

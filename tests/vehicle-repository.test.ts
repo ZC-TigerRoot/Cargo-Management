@@ -177,6 +177,52 @@ describe("车辆仓储映射与并发保护", () => {
     expect(tx.auditLog.create).toHaveBeenCalledTimes(1);
   });
 
+  it("同一业务单号按目标仓库选择独立批次", async () => {
+    const warehouse = { id: "warehouse-shanghai", name: "上海仓", location: "上海", bonded: false };
+    const batch = {
+      id: "batch-shanghai",
+      type: "DOMESTIC" as const,
+      referenceNo: "PO-SHARED",
+      warehouseId: warehouse.id,
+      warehouseKey: warehouse.id,
+      portOfLoad: null,
+      portOfDischarge: null,
+      vesselVoyage: null,
+      etd: null,
+      eta: null,
+      manufacturer: null,
+    };
+    const created = vehicle({ batch, batchId: batch.id, warehouse, warehouseId: warehouse.id });
+    const tx = {
+      inventoryEvent: { findUnique: vi.fn().mockResolvedValue(null), create: vi.fn().mockResolvedValue({}), createMany: vi.fn() },
+      warehouse: { findUnique: vi.fn().mockResolvedValue(warehouse), upsert: vi.fn().mockResolvedValue(warehouse) },
+      businessBatch: { findUnique: vi.fn().mockResolvedValue(batch), upsert: vi.fn().mockResolvedValue(batch) },
+      vehicle: { create: vi.fn().mockResolvedValue({ id: "vehicle-1" }), findUniqueOrThrow: vi.fn().mockResolvedValue(created) },
+      auditLog: { create: vi.fn().mockResolvedValue({}) },
+    };
+    prisma.$transaction.mockImplementationOnce(async (callback: (client: typeof tx) => unknown) => callback(tx));
+
+    await createVehicle({
+      ...minimalPayload,
+      referenceNo: "PO-SHARED",
+      warehouse: warehouse.name,
+      warehouseLocation: warehouse.location,
+    }, "request-warehouse-batch");
+
+    const batchWhere = {
+      type_referenceNo_warehouseKey: {
+        type: "DOMESTIC",
+        referenceNo: "PO-SHARED",
+        warehouseKey: warehouse.id,
+      },
+    };
+    expect(tx.businessBatch.findUnique).toHaveBeenCalledWith({ where: batchWhere });
+    expect(tx.businessBatch.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: batchWhere,
+      create: expect.objectContaining({ warehouseId: warehouse.id, warehouseKey: warehouse.id }),
+    }));
+  });
+
   it("创建时按出库通知单交付时间推断已出库", async () => {
     const created = vehicle({ status: "OUTBOUND" });
     const tx = {

@@ -22,19 +22,19 @@ try {
   console.log(`Administrator ${email} is ready`);
 
   if (process.env.SEED_DEMO_DATA === "true") {
-    const [customer, warehouse, batch] = await Promise.all([
+    const [customer, warehouse] = await Promise.all([
       prisma.customer.upsert({ where: { name: "新程汽车" }, create: { name: "新程汽车" }, update: {} }),
       prisma.warehouse.upsert({
         where: { name_location: { name: "宁波北仑仓", location: "宁波市北仑区" } },
         create: { name: "宁波北仑仓", location: "宁波市北仑区", bonded: false },
         update: {},
       }),
-      prisma.businessBatch.upsert({
-        where: { type_referenceNo: { type: "DOMESTIC", referenceNo: "PO-240708-C" } },
-        create: { type: "DOMESTIC", referenceNo: "PO-240708-C", manufacturer: "浙江吉利汽车有限公司" },
-        update: {},
-      }),
     ]);
+    const batch = await prisma.businessBatch.upsert({
+      where: { type_referenceNo_warehouseKey: { type: "DOMESTIC", referenceNo: "PO-240708-C", warehouseKey: warehouse.id } },
+      create: { type: "DOMESTIC", referenceNo: "PO-240708-C", warehouseId: warehouse.id, warehouseKey: warehouse.id, manufacturer: "浙江吉利汽车有限公司" },
+      update: {},
+    });
     const vehicle = await prisma.vehicle.upsert({
       where: { vin: "LGXCE6DB1R0127654" },
       create: {

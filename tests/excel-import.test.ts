@@ -77,7 +77,7 @@ describe("Excel 导入预校验", () => {
       inboundAmount: "1200.50",
       outboundAmount: "1300",
     });
-    expect(result.rows[0]).toMatchObject({ destinationReferenceNo: "PO-001", destinationBatchKey: '["DOMESTIC","PO-001"]' });
+    expect(result.rows[0]).toMatchObject({ destinationReferenceNo: "PO-001", destinationBatchKey: '["DOMESTIC","PO-001",null,null]' });
     expect(result.rows[0].destinationBatchSnapshot).toEqual(expect.any(String));
     expect(findVehicles).toHaveBeenCalledWith(expect.objectContaining({ where: { vin: { in: ["TEST-VIN-001"] } } }));
   });
@@ -141,5 +141,48 @@ describe("Excel 导入预校验", () => {
 
     expect(result).toMatchObject({ validRows: 0, invalidRows: 1, createRows: 0, updateRows: 0 });
     expect(result.errors[0].errors).toContain("入库时间晚于实际出库时间");
+  });
+
+  it("相同业务单号只使用目标仓库的批次快照", async () => {
+    findBatches.mockResolvedValueOnce([
+      {
+        id: "batch-shanghai",
+        type: "DOMESTIC",
+        referenceNo: "PO-SHARED",
+        warehouseId: "warehouse-shanghai",
+        warehouseKey: "warehouse-shanghai",
+        warehouse: { name: "上海仓", location: "上海" },
+        portOfLoad: null,
+        portOfDischarge: null,
+        vesselVoyage: null,
+        etd: null,
+        eta: null,
+        manufacturer: "上海批次生产商",
+      },
+      {
+        id: "batch-ningbo",
+        type: "DOMESTIC",
+        referenceNo: "PO-SHARED",
+        warehouseId: "warehouse-ningbo",
+        warehouseKey: "warehouse-ningbo",
+        warehouse: { name: "宁波仓", location: "宁波" },
+        portOfLoad: null,
+        portOfDischarge: null,
+        vesselVoyage: null,
+        etd: null,
+        eta: null,
+        manufacturer: "宁波批次生产商",
+      },
+    ]);
+    const result = await checkWorkbook(workbookFile(domesticExcelHeaders, [
+      { 车架号: "VIN-SHANGHAI", "PO#": "PO-SHARED", 入库仓库名称: "上海仓", 仓库地点: "上海" },
+      { 车架号: "VIN-NINGBO", "PO#": "PO-SHARED", 入库仓库名称: "宁波仓", 仓库地点: "宁波" },
+    ]));
+
+    expect(result.rows[0].destinationBatchKey).toBe('["DOMESTIC","PO-SHARED","上海仓","上海"]');
+    expect(result.rows[1].destinationBatchKey).toBe('["DOMESTIC","PO-SHARED","宁波仓","宁波"]');
+    expect(result.rows[0].destinationBatchSnapshot).not.toBe(result.rows[1].destinationBatchSnapshot);
+    expect(result.rows[0].destinationBatchSnapshot).toContain("batch-shanghai");
+    expect(result.rows[1].destinationBatchSnapshot).toContain("batch-ningbo");
   });
 });

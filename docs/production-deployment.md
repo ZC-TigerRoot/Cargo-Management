@@ -10,7 +10,7 @@
 | --- | --- |
 | GitHub 仓库 | `git@github.com:ZC-TigerRoot/Cargo-Management.git` |
 | 部署分支 | `main` |
-| 生产服务器 | `root@bj.tigerroot.cn:22` |
+| 生产服务器 | `root@nj.tigerroot.cn:22` |
 | 公网地址 | `https://cargo.tigerroot.cn` |
 | 宝塔项目名 | `cargo-management` |
 | 运行用户 | `www` |
@@ -389,7 +389,7 @@ curl --silent --output /dev/null --write-out '%{http_code}\n' \
 ```text
 部署时间：
 部署人员/执行方式：
-服务器：bj.tigerroot.cn
+服务器：nj.tigerroot.cn
 站点：https://cargo.tigerroot.cn
 部署分支：main
 旧 commit：

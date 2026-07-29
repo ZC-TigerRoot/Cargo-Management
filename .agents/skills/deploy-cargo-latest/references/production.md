@@ -4,7 +4,7 @@ Treat these as expected values and verify them on every deployment because serve
 
 ## Connection and repository
 
-- Production SSH target: `root@bj.tigerroot.cn`, port `22`
+- Production SSH target: `root@nj.tigerroot.cn`, port `22`
 - Repository: `git@github.com:ZC-TigerRoot/Cargo-Management.git`
 - Deployment branch: `main`
 - Local GitHub identity file: `/Users/zctigerroot/.ssh/Codex`

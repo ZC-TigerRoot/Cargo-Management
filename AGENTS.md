@@ -24,6 +24,7 @@ pnpm build
 - 会话使用 `AUTH_SECRET` 签名的 HttpOnly、SameSite=Strict Cookie，有效期 8 小时
 - 只有管理员可删除车辆、管理用户、重置密码
 - 车辆修改使用版本号乐观锁，并发冲突返回 HTTP 409
+- 业务批次按仓库隔离；相同业务类型和单号在不同仓库必须使用不同的 `BusinessBatch`，不得跨仓共享或更新批次主数据
 - 写请求校验同源信息
 - 上传文件保存在 `UPLOAD_DIR`，数据库只存相对路径
 - 不将 `.env`、私钥或凭据提交到仓库

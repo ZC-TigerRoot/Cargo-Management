@@ -25,6 +25,7 @@ export type VehiclePayload = z.infer<typeof vehiclePayload>;
 type ParsedVehicleUpdate = z.infer<typeof vehicleUpdateInput>;
 export type VehicleUpdatePayload = VehiclePayload & Partial<Pick<ParsedVehicleUpdate, "status" | "statusReason">>;
 export type MutationContext = { actorId?: string; ip?: string };
+const UNASSIGNED_BATCH_WAREHOUSE_KEY = "__unassigned__";
 
 export class VersionConflictError extends Error {
   constructor() {
@@ -36,6 +37,8 @@ export function businessBatchSnapshot(batch: {
   id: string;
   type: string;
   referenceNo: string;
+  warehouseId?: string | null;
+  warehouseKey?: string;
   portOfLoad?: string | null;
   portOfDischarge?: string | null;
   vesselVoyage?: string | null;
@@ -48,6 +51,8 @@ export function businessBatchSnapshot(batch: {
     batch.id,
     batch.type,
     batch.referenceNo,
+    batch.warehouseId ?? null,
+    batch.warehouseKey ?? null,
     batch.portOfLoad ?? null,
     batch.portOfDischarge ?? null,
     batch.vesselVoyage ?? null,
@@ -251,39 +256,13 @@ async function upsertRelations(
   expectedDestinationBatchSnapshot?: string | null,
 ) {
   const type = data.type === "overseas" ? "OVERSEAS" : "DOMESTIC";
-  const [batchBefore, customerBefore, warehouseBefore] = await Promise.all([
-    data.referenceNo ? tx.businessBatch.findUnique({ where: { type_referenceNo: { type, referenceNo: data.referenceNo } } }) : null,
+  const [customerBefore, warehouseBefore] = await Promise.all([
     data.customer ? tx.customer.findUnique({ where: { name: data.customer } }) : null,
     data.warehouse && data.warehouseLocation
       ? tx.warehouse.findUnique({ where: { name_location: { name: data.warehouse, location: data.warehouseLocation } } })
       : null,
   ]);
-  if (expectedDestinationBatchSnapshot !== undefined && businessBatchSnapshot(batchBefore) !== expectedDestinationBatchSnapshot) {
-    throw new VersionConflictError();
-  }
-  const missingBatchValue = expectedDestinationBatchSnapshot === undefined ? null : undefined;
-  const [batch, customer, warehouse] = await Promise.all([
-    data.referenceNo ? tx.businessBatch.upsert({
-      where: { type_referenceNo: { type, referenceNo: data.referenceNo } },
-      create: {
-        type,
-        referenceNo: data.referenceNo,
-        portOfLoad: data.portOfLoad,
-        portOfDischarge: data.portOfDischarge,
-        vesselVoyage: data.vesselVoyage,
-        etd: data.etd ? new Date(data.etd) : undefined,
-        eta: data.eta ? new Date(data.eta) : undefined,
-        manufacturer: data.manufacturer,
-      },
-      update: {
-        portOfLoad: data.portOfLoad ?? missingBatchValue,
-        portOfDischarge: data.portOfDischarge ?? missingBatchValue,
-        vesselVoyage: data.vesselVoyage ?? missingBatchValue,
-        etd: data.etd ? new Date(data.etd) : missingBatchValue,
-        eta: data.eta ? new Date(data.eta) : missingBatchValue,
-        manufacturer: data.manufacturer ?? missingBatchValue,
-      },
-    }) : null,
+  const [customer, warehouse] = await Promise.all([
     data.customer ? tx.customer.upsert({ where: { name: data.customer }, create: { name: data.customer }, update: {} }) : null,
     data.warehouse && data.warehouseLocation ? tx.warehouse.upsert({
       where: { name_location: { name: data.warehouse, location: data.warehouseLocation } },
@@ -293,10 +272,42 @@ async function upsertRelations(
       update: {},
     }) : null,
   ]);
+  const warehouseKey = warehouse?.id ?? UNASSIGNED_BATCH_WAREHOUSE_KEY;
+  const batchBefore = data.referenceNo ? await tx.businessBatch.findUnique({
+    where: { type_referenceNo_warehouseKey: { type, referenceNo: data.referenceNo, warehouseKey } },
+  }) : null;
+  if (expectedDestinationBatchSnapshot !== undefined && businessBatchSnapshot(batchBefore) !== expectedDestinationBatchSnapshot) {
+    throw new VersionConflictError();
+  }
+  const missingBatchValue = expectedDestinationBatchSnapshot === undefined ? null : undefined;
+  const batch = data.referenceNo ? await tx.businessBatch.upsert({
+    where: { type_referenceNo_warehouseKey: { type, referenceNo: data.referenceNo, warehouseKey } },
+    create: {
+      type,
+      referenceNo: data.referenceNo,
+      warehouseId: warehouse?.id,
+      warehouseKey,
+      portOfLoad: data.portOfLoad,
+      portOfDischarge: data.portOfDischarge,
+      vesselVoyage: data.vesselVoyage,
+      etd: data.etd ? new Date(data.etd) : undefined,
+      eta: data.eta ? new Date(data.eta) : undefined,
+      manufacturer: data.manufacturer,
+    },
+    update: {
+      portOfLoad: data.portOfLoad ?? missingBatchValue,
+      portOfDischarge: data.portOfDischarge ?? missingBatchValue,
+      vesselVoyage: data.vesselVoyage ?? missingBatchValue,
+      etd: data.etd ? new Date(data.etd) : missingBatchValue,
+      eta: data.eta ? new Date(data.eta) : missingBatchValue,
+      manufacturer: data.manufacturer ?? missingBatchValue,
+    },
+  }) : null;
 
   const batchSnapshot = (value: NonNullable<typeof batch>) => ({
     type: value.type,
     referenceNo: value.referenceNo,
+    warehouseId: value.warehouseId,
     portOfLoad: value.portOfLoad,
     portOfDischarge: value.portOfDischarge,
     vesselVoyage: value.vesselVoyage,
