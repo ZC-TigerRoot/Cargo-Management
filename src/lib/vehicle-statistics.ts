@@ -43,7 +43,7 @@ export const releaseStages = [
 
 export type ReleaseStage = typeof releaseStages[number];
 
-const inventoryAgeStages = ["0–7 天", "8–15 天", "16–30 天", "31 天以上", "未填写入库时间"] as const;
+const inventoryAgeStages = ["0–7 天", "8–15 天", "16–30 天", "31 天以上", "未填写入库日期"] as const;
 const businessTypes = ["海外仓", "国内仓"] as const;
 const MAX_PIVOT_ROW_VALUES = 100;
 const MAX_PIVOT_COLUMN_VALUES = 30;
@@ -133,7 +133,7 @@ export function summarizeVehicleInventory(records: readonly VehicleRecord[], now
 }
 
 function inventoryAgeLabel(vehicle: VehicleRecord, now: Date) {
-  if (!vehicle.inboundAt) return "未填写入库时间";
+  if (!vehicle.inboundAt) return "未填写入库日期";
   const days = vehicleInventoryDays(vehicle, now);
   if (days <= 7) return "0–7 天";
   if (days <= 15) return "8–15 天";

@@ -1,6 +1,7 @@
 import "server-only";
 
 import * as XLSX from "xlsx";
+import { fromPrismaDate, isCalendarDate } from "./datetime";
 import { prisma } from "./prisma";
 import { vehiclePayload } from "./validators";
 import { businessBatchSnapshot, type VehiclePayload } from "./vehicle-repository";
@@ -44,21 +45,35 @@ function text(value: unknown) {
   return normalized || undefined;
 }
 
-function cellDate(value: unknown) {
-  if (value instanceof Date && !Number.isNaN(value.getTime())) return value;
-  if (typeof value === "number") {
-    const parsed = XLSX.SSF.parse_date_code(value);
-    return parsed ? new Date(Date.UTC(parsed.y, parsed.m - 1, parsed.d, parsed.H, parsed.M, Math.floor(parsed.S))) : undefined;
-  }
-  if (typeof value === "string" && value.trim()) {
-    const parsed = new Date(value);
-    return Number.isNaN(parsed.getTime()) ? undefined : parsed;
-  }
-  return undefined;
-}
+const DATE_TEXT = /^(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,9})?)?(?:Z|[+-](\d{2}):?(\d{2}))?)?$/;
+const HEADER_ALIASES: Readonly<Record<string, readonly string[]>> = {
+  入保税仓库日期: ["入保税仓库时间"],
+  入仓库日期: ["入仓库时间"],
+  商社通知放车日期: ["商社通知放车时间"],
+  客户通知做过户文件日期: ["客户通知做过户文件时间"],
+  客户通知放车日期: ["客户通知放车时间"],
+  实际出库日期: ["实际出保税库时间"],
+  出库通知单交付给商社日期: ["出库通知单交付给商社"],
+  外代交付签收单给商社日期: ["外代交付签收单给商社时间"],
+};
 
-function iso(value: unknown) {
-  return cellDate(value)?.toISOString();
+function calendarDate(value: unknown, date1904 = false) {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    const date = `${String(value.getFullYear()).padStart(4, "0")}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
+    return isCalendarDate(date) ? date : undefined;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const parsed = XLSX.SSF.parse_date_code(value, { date1904 });
+    if (!parsed) return undefined;
+    const date = `${String(parsed.y).padStart(4, "0")}-${String(parsed.m).padStart(2, "0")}-${String(parsed.d).padStart(2, "0")}`;
+    return isCalendarDate(date) ? date : undefined;
+  }
+  if (typeof value !== "string") return undefined;
+  const match = DATE_TEXT.exec(value.trim());
+  if (!match || !isCalendarDate(match[1])) return undefined;
+  if (match[2] && (Number(match[2]) > 23 || Number(match[3]) > 59 || Number(match[4] ?? 0) > 59)) return undefined;
+  if (match[5] && (Number(match[5]) > 14 || Number(match[6]) > 59 || Number(match[5]) === 14 && Number(match[6]) > 0)) return undefined;
+  return match[1];
 }
 
 function extraText(value: unknown, key: string) {
@@ -71,9 +86,8 @@ function batchKey(type: "OVERSEAS" | "DOMESTIC", referenceNo: string, warehouse?
   return JSON.stringify([type, referenceNo, warehouse ?? null, warehouseLocation ?? null]);
 }
 
-function payloadFor(row: Record<string, unknown>, overseas: boolean): VehiclePayload {
-  const inboundHeader = overseas ? "入保税仓库时间" : "入仓库时间";
-  const outboundNoticeHeader = overseas ? "出库通知单交付给商社日期" : "出库通知单交付给商社";
+function payloadFor(row: Record<string, unknown>, overseas: boolean, date1904: boolean): VehiclePayload {
+  const inboundHeader = overseas ? "入保税仓库日期" : "入仓库日期";
   return vehiclePayload.parse({
     type: overseas ? "overseas" : "domestic",
     vin: text(row["车架号"]),
@@ -84,27 +98,27 @@ function payloadFor(row: Record<string, unknown>, overseas: boolean): VehiclePay
     portOfLoad: text(row["起运港"]),
     portOfDischarge: text(row["目的港"]),
     vesselVoyage: text(row["船名航次"]),
-    etd: iso(row.ETD),
-    eta: iso(row.ETA),
+    etd: calendarDate(row.ETD, date1904),
+    eta: calendarDate(row.ETA, date1904),
     manufacturer: text(row["生产商"]),
     warehouseLocation: text(row[overseas ? "保税仓地点" : "仓库地点"]),
     warehouse: text(row["入库仓库名称"]),
     warehouseTimezone: "Asia/Shanghai",
     customer: text(row["所属客人"]),
-    inboundAt: iso(row[inboundHeader]),
+    inboundAt: calendarDate(row[inboundHeader], date1904),
     inboundAmount: text(row["入库金额"]),
     inboundBoeNo: text(row["入库BOE号"]),
-    merchantReleaseAt: iso(row["商社通知放车时间"]),
-    transferDocNoticeAt: iso(row["客户通知做过户文件时间"]),
-    customerReleaseAt: iso(row["客户通知放车时间"]),
+    merchantReleaseAt: calendarDate(row["商社通知放车日期"], date1904),
+    transferDocNoticeAt: calendarDate(row["客户通知做过户文件日期"], date1904),
+    customerReleaseAt: calendarDate(row["客户通知放车日期"], date1904),
     pickupDetails: text(row["出库提货明细"]),
-    outboundAt: iso(row["实际出保税库时间"]),
+    outboundAt: calendarDate(row["实际出库日期"], date1904),
     outboundBoeNo: text(row["出库BOE号"]),
     outboundBoeTitle: text(row["BOE抬头"]),
     outboundAmount: text(row["出库金额"]),
-    outboundNoticeDeliveredAt: iso(row[outboundNoticeHeader]),
-    customerReceiptDeliveredAt: iso(row["客户交付签收单日期"]),
-    agentReceiptDeliveredAt: iso(row["外代交付签收单给商社时间"]),
+    outboundNoticeDeliveredAt: calendarDate(row["出库通知单交付给商社日期"], date1904),
+    customerReceiptDeliveredAt: calendarDate(row["客户交付签收单日期"], date1904),
+    agentReceiptDeliveredAt: calendarDate(row["外代交付签收单给商社日期"], date1904),
     notes: text(row["备注"]),
   });
 }
@@ -128,14 +142,40 @@ export async function checkWorkbook(file: File): Promise<CheckedWorkbook> {
   const headers = (matrix[0] ?? []).map(value => String(value ?? "").trim()).filter(Boolean);
   const sourceRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: null, raw: true });
   if (sourceRows.length > MAX_IMPORT_ROWS) throw new ImportWorkbookError("TOO_MANY_ROWS", `单次最多校验和导入 ${MAX_IMPORT_ROWS} 行`, 413);
+  const date1904 = workbook.Workbook?.WBProps?.date1904 === true;
 
   const overseas = headers.includes("提单号");
   const domestic = headers.includes("PO#");
   if (overseas === domestic) throw new ImportWorkbookError("UNKNOWN_TEMPLATE", "模板必须且只能包含“提单号”或“PO#”列", 422);
   const expected: readonly string[] = overseas ? overseasExcelHeaders : domesticExcelHeaders;
-  const missingHeaders = expected.filter(header => !headers.includes(header));
-  const ignoredColumns = [...new Set(["库存天数", ...headers.filter(header => !expected.includes(header))])];
-  const normalizedRows = sourceRows.map(row => Object.fromEntries(expected.map(header => [header, row[header] ?? ""])));
+  const acceptedHeaders = (header: string) => [header, ...(HEADER_ALIASES[header] ?? [])];
+  const recognizedHeaders = new Set(expected.flatMap(acceptedHeaders));
+  const sourceHeaders = new Map(expected.map(header => [
+    header,
+    acceptedHeaders(header).find(candidate => headers.includes(candidate)) ?? header,
+  ] as const));
+  const missingHeaders = expected.filter(header => !acceptedHeaders(header).some(candidate => headers.includes(candidate)));
+  const ignoredColumns = [...new Set(["库存天数", ...headers.filter(header => !recognizedHeaders.has(header))])];
+  const normalizedRows = sourceRows.map(row => Object.fromEntries(expected.map(header => [
+    header,
+    row[sourceHeaders.get(header) ?? header] ?? "",
+  ])));
+  const inboundHeader = overseas ? "入保税仓库日期" : "入仓库日期";
+  const outboundNoticeHeader = "出库通知单交付给商社日期";
+  const dateColumns: [string, string][] = [
+    [inboundHeader, "入库日期格式无效"],
+    ["商社通知放车日期", "商社通知放车日期格式无效"],
+    ["实际出库日期", "实际出库日期格式无效"],
+    [outboundNoticeHeader, `${outboundNoticeHeader}格式无效`],
+    ["客户交付签收单日期", "客户交付签收单日期格式无效"],
+    ["外代交付签收单给商社日期", "外代交付签收单给商社日期格式无效"],
+  ];
+  if (overseas) dateColumns.push(
+    ["ETD", "ETD 格式无效"],
+    ["ETA", "ETA 格式无效"],
+    ["客户通知做过户文件日期", "客户通知做过户文件日期格式无效"],
+    ["客户通知放车日期", "客户通知放车日期格式无效"],
+  );
 
   const seenVins = new Set<string>();
   const checked: CheckedImportRow[] = normalizedRows.map((row, index) => {
@@ -146,27 +186,27 @@ export async function checkWorkbook(file: File): Promise<CheckedWorkbook> {
     else if (seenVins.has(vin)) errors.push("文件内车架号重复");
     if (vin) seenVins.add(vin);
 
-    const inboundHeader = overseas ? "入保税仓库时间" : "入仓库时间";
-    const inbound = cellDate(row[inboundHeader]);
-    const outbound = cellDate(row["实际出保税库时间"]);
-    if (text(row[inboundHeader]) && !inbound) errors.push("入库时间格式无效");
-    if (text(row["实际出保税库时间"]) && !outbound) errors.push("实际出库时间格式无效");
-    if (inbound && outbound && inbound > outbound) errors.push("入库时间晚于实际出库时间");
+    const parsedDates = new Map(dateColumns.map(([header, error]) => {
+      const parsed = calendarDate(row[header], date1904);
+      if (text(row[header]) && !parsed) errors.push(error);
+      return [header, parsed] as const;
+    }));
+    const inbound = parsedDates.get(inboundHeader);
+    const outbound = parsedDates.get("实际出库日期");
+    if (inbound && outbound && inbound > outbound) errors.push("入库日期晚于实际出库日期");
     for (const amountHeader of ["入库金额", "出库金额"]) {
       const value = text(row[amountHeader]);
       if (value && (!/^\d{1,16}(?:\.\d{1,2})?$/.test(value) || Number(value) < 0)) errors.push(`${amountHeader}格式无效`);
     }
     if (overseas) {
-      const etd = cellDate(row.ETD);
-      const eta = cellDate(row.ETA);
-      if (text(row.ETD) && !etd) errors.push("ETD 格式无效");
-      if (text(row.ETA) && !eta) errors.push("ETA 格式无效");
+      const etd = parsedDates.get("ETD");
+      const eta = parsedDates.get("ETA");
       if (etd && eta && etd > eta) errors.push("ETD 晚于 ETA");
     }
 
     let payload: VehiclePayload;
     try {
-      payload = payloadFor(row, overseas);
+      payload = payloadFor(row, overseas, date1904);
     } catch {
       errors.push("字段内容无法转换为车辆数据");
       payload = vehiclePayload.parse({ type: overseas ? "overseas" : "domestic", warehouseTimezone: "Asia/Shanghai" });
@@ -223,14 +263,14 @@ export async function checkWorkbook(file: File): Promise<CheckedWorkbook> {
       item.errors.push("车架号已存在且业务批次冲突");
       continue;
     }
-    const inboundAt = item.payload.inboundAt ?? vehicle.inboundAt?.toISOString();
-    const outboundAt = item.payload.outboundAt ?? vehicle.outboundAt?.toISOString();
-    if (inboundAt && outboundAt && new Date(inboundAt) > new Date(outboundAt) && !item.errors.includes("入库时间晚于实际出库时间")) {
-      item.errors.push("入库时间晚于实际出库时间");
+    const inboundAt = item.payload.inboundAt ?? (vehicle.inboundAt ? fromPrismaDate(vehicle.inboundAt) : undefined);
+    const outboundAt = item.payload.outboundAt ?? (vehicle.outboundAt ? fromPrismaDate(vehicle.outboundAt) : undefined);
+    if (inboundAt && outboundAt && inboundAt > outboundAt && !item.errors.includes("入库日期晚于实际出库日期")) {
+      item.errors.push("入库日期晚于实际出库日期");
     }
-    const etd = item.payload.etd ?? vehicle.batch?.etd?.toISOString() ?? extraText(vehicle.extra, "etd");
-    const eta = item.payload.eta ?? vehicle.batch?.eta?.toISOString() ?? extraText(vehicle.extra, "eta");
-    if (etd && eta && new Date(etd) > new Date(eta) && !item.errors.includes("ETD 晚于 ETA")) item.errors.push("ETD 晚于 ETA");
+    const etd = item.payload.etd ?? (vehicle.batch?.etd ? fromPrismaDate(vehicle.batch.etd) : calendarDate(extraText(vehicle.extra, "etd")));
+    const eta = item.payload.eta ?? (vehicle.batch?.eta ? fromPrismaDate(vehicle.batch.eta) : calendarDate(extraText(vehicle.extra, "eta")));
+    if (etd && eta && etd > eta && !item.errors.includes("ETD 晚于 ETA")) item.errors.push("ETD 晚于 ETA");
   }
 
   const destinationReferences = [...new Set(checked.flatMap(item => item.destinationReferenceNo ? [item.destinationReferenceNo] : []))];

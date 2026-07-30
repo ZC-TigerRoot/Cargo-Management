@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { assertSameOrigin, AuthorizationError, requestIp, requireUser } from "@/lib/auth";
+import { fromPrismaDate } from "@/lib/datetime";
 import { prisma } from "@/lib/prisma";
 import { SESSION_COOKIE, sessionCookieOptions } from "@/lib/session";
 
@@ -49,7 +50,7 @@ const userData = (user: UserRow) => ({
   active: user.active,
   customerId: user.customerId,
   warehouseIds: user.warehouseScopes.map(scope => scope.warehouseId),
-  createdAt: user.createdAt.toISOString(),
+  createdAt: fromPrismaDate(user.createdAt),
 });
 
 const select = {
@@ -76,7 +77,7 @@ export async function GET() {
   try {
     await requireUser("manageUsers");
     const [users, customers, warehouses] = await Promise.all([
-      prisma.user.findMany({ orderBy: { createdAt: "asc" }, select }),
+      prisma.user.findMany({ orderBy: { recordSequence: "asc" }, select }),
       prisma.customer.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true } }),
       prisma.warehouse.findMany({ orderBy: [{ name: "asc" }, { location: "asc" }], select: { id: true, name: true, location: true } }),
     ]);

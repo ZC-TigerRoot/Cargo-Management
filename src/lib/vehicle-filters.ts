@@ -1,5 +1,5 @@
 import { inventoryDays, vehicleStatuses, type BusinessType, type VehicleRecord, type VehicleStatus } from "./domain";
-import { CHINA_TIME_ZONE, localInputValue } from "./datetime";
+import { isCalendarDate, normalizeCalendarDate } from "./datetime";
 
 export const EMPTY_FACET_VALUE = "__empty__";
 
@@ -67,7 +67,7 @@ function matchesText(value: string | undefined, filter: string) {
 }
 
 function recordDate(value: string | undefined) {
-  return value ? localInputValue(value, CHINA_TIME_ZONE).slice(0, 10) : "";
+  return value ? normalizeCalendarDate(value) : "";
 }
 
 function matchesDateRange(value: string | undefined, from: string, to: string) {
@@ -148,7 +148,7 @@ export function activeVehicleFilterCount(filters: VehicleFilters) {
 }
 
 function dateParam(value: string | null) {
-  return value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : "";
+  return value && isCalendarDate(value) ? value : "";
 }
 
 function amountParam(value: string | null) {

@@ -14,6 +14,7 @@ import {
   X,
 } from "lucide-react";
 import SideNav from "@/components/side-nav";
+import { formatCalendarDate } from "@/lib/datetime";
 import { roleLabels, type Role } from "@/lib/domain";
 import { useSession } from "@/lib/use-session";
 
@@ -218,7 +219,7 @@ export default function UserManagement() {
                   <td><span className={`user-role user-role-${target.role}`}>{roleLabels[target.role]}</span><small>{roleDescriptions[target.role]}</small></td>
                   <td><b className="scope-value">{scopeLabel(target, options)}</b></td>
                   <td><span className={target.active ? "account-status active" : "account-status inactive"}><i />{target.active ? "已启用" : "已停用"}</span></td>
-                  <td>{formatDate(target.createdAt)}</td>
+                  <td>{formatCalendarDate(target.createdAt) || "—"}</td>
                   <td><div className="user-row-actions"><button type="button" onClick={() => setDialogUser(target)}><Pencil />编辑</button><button type="button" onClick={() => setResetUser(target)}><KeyRound />重置密码</button><button type="button" className={target.active ? "danger" : "activate"} disabled={pendingId === target.id || (isCurrent && target.active)} title={isCurrent && target.active ? "不能停用当前登录账号" : undefined} onClick={() => toggleActive(target)}>{pendingId === target.id ? "处理中…" : target.active ? "停用" : "启用"}</button></div></td>
                 </tr>;
               })}</tbody>
@@ -380,9 +381,4 @@ function scopeLabel(user: UserRow, options: UserOptions) {
   if (user.role === "customer") return options.customers.find(customer => customer.id === user.customerId)?.name ?? "未绑定客户";
   const names = user.warehouseIds.map(id => options.warehouses.find(warehouse => warehouse.id === id)?.name).filter(Boolean);
   return names.length ? names.join("、") : "未分配仓库";
-}
-
-function formatDate(value: string) {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? "—" : new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
 }

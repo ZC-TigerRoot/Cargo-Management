@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { Prisma } from "@prisma/client";
 import { driverSubmission } from "@/lib/validators";
+import { chinaToday, fromPrismaDate, toPrismaDate } from "@/lib/datetime";
 import { prisma } from "@/lib/prisma";
 import { requestIp } from "@/lib/auth";
 import { MAX_DRIVER_PHOTO_BYTES, removeLocalUpload, storeDriverPhoto, type StoredUpload } from "@/lib/local-upload";
@@ -31,10 +32,10 @@ async function findTask(token: string) {
   });
 }
 
-function taskError(task: Awaited<ReturnType<typeof findTask>>, now = new Date()) {
+function taskError(task: Awaited<ReturnType<typeof findTask>>, today = chinaToday()) {
   if (!task) return NextResponse.json({ error: "TASK_NOT_FOUND", message: "提货任务不存在" }, { status: 404 });
   if (task.revokedAt) return NextResponse.json({ error: "TASK_REVOKED", message: "该提货链接已撤销" }, { status: 410 });
-  if (task.expiresAt <= now) return NextResponse.json({ error: "TASK_EXPIRED", message: "该提货链接已过期" }, { status: 410 });
+  if (fromPrismaDate(task.expiresAt) < today) return NextResponse.json({ error: "TASK_EXPIRED", message: "该提货链接已过期" }, { status: 410 });
 }
 
 export async function GET(_: NextRequest, { params }: { params: Promise<{ token: string }> }) {
@@ -45,9 +46,9 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ token:
     if (error) return error;
     return NextResponse.json({ data: {
       taskNo: task!.taskNo,
-      expiresAt: task!.expiresAt.toISOString(),
+      expiresAt: fromPrismaDate(task!.expiresAt),
       status: task!.submittedAt ? "submitted" : "pending",
-      submittedAt: task!.submittedAt?.toISOString(),
+      submittedAt: task!.submittedAt ? fromPrismaDate(task!.submittedAt) : undefined,
       receiptNo: task!.submittedAt ? receiptNo(task!.taskNo) : undefined,
       vehicles: task!.items.map(item => ({ id: item.vehicle.id, vin: item.vehicle.vin?.slice(-6), model: item.vehicle.model ?? undefined })),
     } });
@@ -85,7 +86,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
       return NextResponse.json({ error: "INVALID_FORM", message: "上传表单格式无效" }, { status: 400 });
     }
     const parsed = driverSubmission.safeParse({
-      pickupAt: form.get("pickupAt"),
       idempotencyKey: form.get("idempotencyKey"),
       driverName: form.get("driverName"),
       driverPhone: form.get("driverPhone"),
@@ -102,19 +102,20 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
     if (task!.submittedAt) {
       const previous = jsonObject(task!.driverSubmission);
       if (previous.idempotencyKey === parsed.data.idempotencyKey) {
-        return NextResponse.json({ data: { status: "submitted", receiptNo: receiptNo(task!.taskNo), submittedAt: task!.submittedAt.toISOString(), ...submittedDriver(task!.driverSubmission) } });
+        return NextResponse.json({ data: { status: "submitted", receiptNo: receiptNo(task!.taskNo), submittedAt: fromPrismaDate(task!.submittedAt), ...submittedDriver(task!.driverSubmission) } });
       }
       return NextResponse.json({ error: "ALREADY_SUBMITTED", message: "该提货任务已经签收" }, { status: 409 });
     }
 
-    const now = new Date();
-    storedUpload = await storeDriverPhoto(photo, now);
-    const submission = { ...parsed.data, photoPath: storedUpload.objectKey } satisfies Prisma.InputJsonObject;
+    storedUpload = await storeDriverPhoto(photo, new Date());
+    const pickupDate = chinaToday();
+    const submittedAt = toPrismaDate(pickupDate);
+    const submission = { ...parsed.data, pickupDate, photoPath: storedUpload.objectKey } satisfies Prisma.InputJsonObject;
     const driverActor = `司机：${parsed.data.driverName}`;
     const submitted = await prisma.$transaction(async tx => {
       const claimed = await tx.pickupTask.updateMany({
-        where: { id: task!.id, submittedAt: null, revokedAt: null, expiresAt: { gt: now } },
-        data: { submittedAt: now, driverSubmission: submission },
+        where: { id: task!.id, submittedAt: null, revokedAt: null, expiresAt: { gte: submittedAt } },
+        data: { submittedAt, driverSubmission: submission },
       });
       if (claimed.count !== 1) return false;
       for (const item of task!.items) {
@@ -123,7 +124,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
           data: {
             vehicleId: item.vehicle.id,
             type: "DRIVER_SIGNED",
-            occurredAt: new Date(parsed.data.pickupAt),
+            occurredAt: submittedAt,
             idempotencyKey: `${parsed.data.idempotencyKey}:${item.vehicle.id}`,
             payload: {
               taskNo: task!.taskNo,
@@ -164,7 +165,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
           entityType: "PickupTask",
           entityId: task!.id,
           before: { taskNo: task!.taskNo, submittedAt: null, status: "pending" },
-          after: { taskNo: task!.taskNo, submittedAt: now.toISOString(), status: "submitted", photoUploaded: true, driverName: parsed.data.driverName, driverPhone: parsed.data.driverPhone, vehicleIds: task!.items.map(item => item.vehicle.id) },
+          after: { taskNo: task!.taskNo, submittedAt: fromPrismaDate(submittedAt), status: "submitted", photoUploaded: true, driverName: parsed.data.driverName, driverPhone: parsed.data.driverPhone, vehicleIds: task!.items.map(item => item.vehicle.id) },
           ip: requestIp(req),
         },
       });
@@ -174,12 +175,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
       const latest = await findTask(token);
       const previous = jsonObject(latest?.driverSubmission ?? null);
       if (latest?.submittedAt && previous.idempotencyKey === parsed.data.idempotencyKey) {
-        return NextResponse.json({ data: { status: "submitted", receiptNo: receiptNo(latest.taskNo), submittedAt: latest.submittedAt.toISOString(), ...submittedDriver(latest.driverSubmission) } });
+        return NextResponse.json({ data: { status: "submitted", receiptNo: receiptNo(latest.taskNo), submittedAt: fromPrismaDate(latest.submittedAt), ...submittedDriver(latest.driverSubmission) } });
       }
       return NextResponse.json({ error: "SUBMISSION_CONFLICT", message: "任务状态已变化，请刷新后重试" }, { status: 409 });
     }
     uploadCommitted = true;
-    return NextResponse.json({ data: { status: "submitted", receiptNo: receiptNo(task!.taskNo), submittedAt: now.toISOString(), driverName: parsed.data.driverName, driverPhone: parsed.data.driverPhone } }, { status: 201 });
+    return NextResponse.json({ data: { status: "submitted", receiptNo: receiptNo(task!.taskNo), submittedAt: fromPrismaDate(submittedAt), driverName: parsed.data.driverName, driverPhone: parsed.data.driverPhone } }, { status: 201 });
   } catch (error) {
     if (error instanceof Error && error.message === "IMAGE_TOO_LARGE") {
       return NextResponse.json({ error: "PAYLOAD_TOO_LARGE", message: "车辆照片不能超过 5 MB" }, { status: 413 });

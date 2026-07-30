@@ -27,6 +27,7 @@ function vehicle(overrides: Record<string, unknown> = {}): VehicleWithRelations 
   return {
     id: "vehicle-1",
     version: 1,
+    updateSequence: BigInt(1),
     vin: "VIN-001",
     model: "测试车型",
     brand: null,
@@ -81,9 +82,11 @@ describe("车辆仓储映射与并发保护", () => {
       ],
     }));
 
-    expect(record).toMatchObject({ type: "domestic", referenceNo: "PO-RELATION", customer: "测试客户", warehouse: "关系仓库", status: "已完成" });
+    expect(record).toMatchObject({ type: "domestic", referenceNo: "PO-RELATION", customer: "测试客户", warehouse: "关系仓库", status: "已完成", updatedAt: "2026-07-02" });
     expect(record.history?.[0]).toMatchObject({
       title: "司机完成签收",
+      occurredAt: "2026-07-03",
+      recordedAt: "2026-07-03",
       actor: "仓管员",
       details: [{ label: "姓名", value: "张师傅" }, { label: "联系电话", value: "13800138000" }],
       attachments: [{ url: "/api/v1/attachments/attachment%2F1" }],
@@ -99,7 +102,7 @@ describe("车辆仓储映射与并发保护", () => {
     }));
 
     expect(record.merchantReleaseAt).toBeUndefined();
-    expect(record.history?.[1]).toMatchObject({ title: "撤销：商社通知放车", reason: "清空错误的业务时间" });
+    expect(record.history?.[1]).toMatchObject({ title: "撤销：商社通知放车", reason: "清空错误的业务日期" });
   });
 
   it("把查询词和数据范围一起传入 Prisma", async () => {
@@ -111,7 +114,10 @@ describe("车辆仓储映射与并发保护", () => {
         customerId: "customer-1",
         OR: expect.arrayContaining([{ vin: { contains: "VIN-001", mode: "insensitive" } }]),
       }),
-      orderBy: { updatedAt: "desc" },
+      include: expect.objectContaining({
+        events: expect.objectContaining({ orderBy: { recordSequence: "asc" } }),
+      }),
+      orderBy: { updateSequence: "desc" },
     }));
   });
 
@@ -126,6 +132,9 @@ describe("车辆仓储映射与并发保护", () => {
         { field: "notes", label: "备注", before: undefined, after: "已检查" },
       ],
     })]);
+    expect(prisma.auditLog.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      orderBy: { recordSequence: "asc" },
+    }));
   });
 
   it("重复创建请求直接返回已有车辆", async () => {
@@ -223,7 +232,7 @@ describe("车辆仓储映射与并发保护", () => {
     }));
   });
 
-  it("创建时按出库通知单交付时间推断已出库", async () => {
+  it("创建时按出库通知单交付日期推断已出库", async () => {
     const created = vehicle({ status: "OUTBOUND" });
     const tx = {
       inventoryEvent: { findUnique: vi.fn().mockResolvedValue(null), create: vi.fn().mockResolvedValue({}), createMany: vi.fn() },
@@ -234,8 +243,8 @@ describe("车辆仓储映射与并发保护", () => {
 
     await createVehicle({
       ...minimalPayload,
-      inboundAt: "2026-07-01T00:00:00.000Z",
-      outboundNoticeDeliveredAt: "2026-07-05T00:00:00.000Z",
+      inboundAt: "2026-07-01",
+      outboundNoticeDeliveredAt: "2026-07-05",
     }, "request-outbound-notice");
 
     expect(tx.vehicle.create).toHaveBeenCalledWith({ data: expect.objectContaining({ status: "OUTBOUND" }) });
@@ -269,7 +278,7 @@ describe("车辆仓储映射与并发保护", () => {
 
     await expect(updateVehicleFromImport("vehicle-1", 1, {
       ...minimalPayload,
-      merchantReleaseAt: "2026-07-03T00:00:00.000Z",
+      merchantReleaseAt: "2026-07-03",
     })).resolves.toBe(updated);
 
     expect(tx.vehicle.updateMany).toHaveBeenCalledWith(expect.objectContaining({
@@ -282,7 +291,7 @@ describe("车辆仓储映射与并发保护", () => {
     }));
   });
 
-  it("Excel 更新使用原值校验跨字段时间顺序", async () => {
+  it("Excel 更新使用原值校验跨字段日期顺序", async () => {
     const existing = vehicle({
       status: "PENDING_RECEIPT",
       outboundAt: new Date("2026-07-05T00:00:00.000Z"),
@@ -293,8 +302,8 @@ describe("车辆仓储映射与并发保护", () => {
 
     await expect(updateVehicleFromImport("vehicle-1", 1, {
       ...minimalPayload,
-      inboundAt: "2026-07-10T00:00:00.000Z",
-    })).rejects.toThrow("实际出库时间不能早于入库时间");
+      inboundAt: "2026-07-10",
+    })).rejects.toThrow("实际出库日期不能早于入库日期");
   });
 
   it("Excel 更新拒绝覆盖预校验后变化的共享批次", async () => {
@@ -399,13 +408,13 @@ describe("车辆仓储映射与并发保护", () => {
     };
   }
 
-  it("补充业务时间时按规则自动推进状态", async () => {
+  it("补充业务日期时按规则自动推进状态", async () => {
     const existing = vehicle({ status: "IN_STOCK", inboundAt: new Date("2026-07-01T00:00:00.000Z") });
     const updated = vehicle({ version: 2, status: "PENDING_RELEASE" });
     const tx = updateTx(existing, updated);
     prisma.$transaction.mockImplementationOnce(async (callback: (client: typeof tx) => unknown) => callback(tx));
 
-    const data = { ...minimalPayload, inboundAt: "2026-07-01T00:00:00.000Z", merchantReleaseAt: "2026-07-03T00:00:00.000Z" } as VehicleUpdatePayload;
+    const data = { ...minimalPayload, inboundAt: "2026-07-01", merchantReleaseAt: "2026-07-03" } as VehicleUpdatePayload;
     await expect(updateVehicle("vehicle-1", 1, data)).resolves.toBe(updated);
     expect(tx.vehicle.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "PENDING_RELEASE" }) }));
     expect(tx.inventoryEvent.create).toHaveBeenCalledWith({ data: expect.objectContaining({ type: "CORRECTION", payload: expect.objectContaining({ source: "auto-infer", from: "在库", to: "待放车" }) }) });
@@ -417,7 +426,7 @@ describe("车辆仓储映射与并发保护", () => {
     const tx = updateTx(existing, updated);
     prisma.$transaction.mockImplementationOnce(async (callback: (client: typeof tx) => unknown) => callback(tx));
 
-    const data = { ...minimalPayload, inboundAt: "2026-07-01T00:00:00.000Z", merchantReleaseAt: "2026-07-03T00:00:00.000Z" } as VehicleUpdatePayload;
+    const data = { ...minimalPayload, inboundAt: "2026-07-01", merchantReleaseAt: "2026-07-03" } as VehicleUpdatePayload;
     await expect(updateVehicle("vehicle-1", 1, data)).resolves.toBe(updated);
     expect(tx.vehicle.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "EXCEPTION" }) }));
     expect(tx.inventoryEvent.create).not.toHaveBeenCalledWith({ data: expect.objectContaining({ payload: expect.objectContaining({ field: "status" }) }) });
@@ -434,12 +443,12 @@ describe("车辆仓储映射与并发保护", () => {
     const tx = updateTx(existing, updated);
     prisma.$transaction.mockImplementationOnce(async (callback: (client: typeof tx) => unknown) => callback(tx));
 
-    const data = { ...minimalPayload, outboundAt: "2026-07-05T00:00:00.000Z" } as VehicleUpdatePayload;
+    const data = { ...minimalPayload, outboundAt: "2026-07-05" } as VehicleUpdatePayload;
     await expect(updateVehicle("vehicle-1", 1, data)).resolves.toBe(updated);
     expect(tx.vehicle.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "COMPLETED" }) }));
   });
 
-  it("创建提货任务后补充实际出库时间自动推进到待签收", async () => {
+  it("创建提货任务后补充实际出库日期自动推进到待签收", async () => {
     const existing = vehicle({
       status: "PENDING_PICKUP",
       inboundAt: new Date("2026-07-01T00:00:00.000Z"),
@@ -451,13 +460,13 @@ describe("车辆仓储映射与并发保护", () => {
     const tx = updateTx(existing, updated);
     prisma.$transaction.mockImplementationOnce(async (callback: (client: typeof tx) => unknown) => callback(tx));
 
-    const data = { ...minimalPayload, inboundAt: "2026-07-01T00:00:00.000Z", outboundAt: "2026-07-06T00:00:00.000Z" } as VehicleUpdatePayload;
+    const data = { ...minimalPayload, inboundAt: "2026-07-01", outboundAt: "2026-07-06" } as VehicleUpdatePayload;
     await expect(updateVehicle("vehicle-1", 1, data)).resolves.toBe(updated);
     expect(tx.vehicle.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "PENDING_RECEIPT" }) }));
     expect(tx.inventoryEvent.create).toHaveBeenCalledWith({ data: expect.objectContaining({ type: "CORRECTION", payload: expect.objectContaining({ source: "auto-infer", from: "待提货", to: "待签收" }) }) });
   });
 
-  it("补充出库通知单交付时间自动推进到已出库", async () => {
+  it("补充出库通知单交付日期自动推进到已出库", async () => {
     const existing = vehicle({
       status: "PENDING_PICKUP",
       inboundAt: new Date("2026-07-01T00:00:00.000Z"),
@@ -469,7 +478,7 @@ describe("车辆仓储映射与并发保护", () => {
     const tx = updateTx(existing, updated);
     prisma.$transaction.mockImplementationOnce(async (callback: (client: typeof tx) => unknown) => callback(tx));
 
-    const data = { ...minimalPayload, inboundAt: "2026-07-01T00:00:00.000Z", outboundNoticeDeliveredAt: "2026-07-05T00:00:00.000Z" } as VehicleUpdatePayload;
+    const data = { ...minimalPayload, inboundAt: "2026-07-01", outboundNoticeDeliveredAt: "2026-07-05" } as VehicleUpdatePayload;
     await expect(updateVehicle("vehicle-1", 1, data)).resolves.toBe(updated);
     expect(tx.vehicle.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "OUTBOUND" }) }));
     expect(tx.inventoryEvent.create).toHaveBeenCalledWith({ data: expect.objectContaining({ type: "CORRECTION", payload: expect.objectContaining({ source: "auto-infer", from: "待提货", to: "已出库" }) }) });
@@ -489,22 +498,22 @@ describe("车辆仓储映射与并发保护", () => {
 
     const data = {
       ...minimalPayload,
-      inboundAt: "2026-07-01T00:00:00.000Z",
-      outboundNoticeDeliveredAt: "2026-07-04T00:00:00.000Z",
-      outboundAt: "2026-07-06T00:00:00.000Z",
+      inboundAt: "2026-07-01",
+      outboundNoticeDeliveredAt: "2026-07-04",
+      outboundAt: "2026-07-06",
     } as VehicleUpdatePayload;
     await expect(updateVehicle("vehicle-1", 1, data)).resolves.toBe(updated);
     expect(tx.vehicle.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "PENDING_RECEIPT" }) }));
     expect(tx.inventoryEvent.create).toHaveBeenCalledWith({ data: expect.objectContaining({ type: "CORRECTION", payload: expect.objectContaining({ source: "auto-infer", from: "已出库", to: "待签收" }) }) });
   });
 
-  it("清空实际出库时间后状态随数据回退", async () => {
+  it("清空实际出库日期后状态随数据回退", async () => {
     const existing = vehicle({ status: "PENDING_RECEIPT", inboundAt: new Date("2026-07-01T00:00:00.000Z"), outboundAt: new Date("2026-07-04T00:00:00.000Z") });
     const updated = vehicle({ version: 2, status: "IN_STOCK" });
     const tx = updateTx(existing, updated);
     prisma.$transaction.mockImplementationOnce(async (callback: (client: typeof tx) => unknown) => callback(tx));
 
-    const data = { ...minimalPayload, inboundAt: "2026-07-01T00:00:00.000Z" } as VehicleUpdatePayload;
+    const data = { ...minimalPayload, inboundAt: "2026-07-01" } as VehicleUpdatePayload;
     await expect(updateVehicle("vehicle-1", 1, data)).resolves.toBe(updated);
     expect(tx.vehicle.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "IN_STOCK" }) }));
   });

@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { can, inventoryDays, transitions } from "../src/lib/domain";
 import { driverSubmission, vehicleDeleteInput, vehicleInput, vehicleUpdateInput } from "../src/lib/validators";
-import { localInputValue, zonedLocalToIso } from "../src/lib/datetime";
+import { addCalendarDays, chinaToday, fromPrismaDate, localInputValue, toPrismaDate, zonedLocalToIso } from "../src/lib/datetime";
 import { matchesPickupSearch, pickupTaskMatchesSearch, pickupVehicleSearchValues } from "../src/lib/pickup-search";
 
 describe("库存领域规则", () => {
-  it("出库后库存天数固定", () => expect(inventoryDays("2026-07-01T00:00:00Z", "2026-07-11T00:00:00Z", new Date("2026-08-01"))).toBe(10));
-  it("在库天数按当前时间计算", () => expect(inventoryDays("2026-07-01T00:00:00Z", undefined, new Date("2026-07-03T00:00:00Z"))).toBe(2));
+  it("同日入出库计为一天", () => expect(inventoryDays("2026-07-01", "2026-07-01")).toBe(1));
+  it("出库后按首尾日期计算库存天数", () => expect(inventoryDays("2026-07-01", "2026-07-11", new Date("2026-08-01"))).toBe(11));
+  it("在库天数按当前日期计算", () => expect(inventoryDays("2026-07-01", undefined, new Date("2026-07-03T00:00:00Z"))).toBe(3));
   it("货代和管理员可导出，客户与仓管不可导出", () => {
     expect(can("forwarder", "export")).toBe(true);
     expect(can("warehouse", "export")).toBe(false);
@@ -33,20 +34,24 @@ describe("库存领域规则", () => {
 
 describe("司机提车凭证校验", () => {
   const base = {
-    pickupAt: "2026-07-15T08:00:00.000Z",
     idempotencyKey: "driver-submit-001",
     driverName: "张师傅",
     driverPhone: "138 0013 8000",
   };
 
-  it("只校验签收元数据，不接收 Base64 图片内容", () => {
-    const result = driverSubmission.safeParse({ ...base, photoDataUrl: "data:image/jpeg;base64,AQ==" });
-    expect(result.success).toBe(true);
-    if (result.success) expect(result.data).toEqual(base);
+  it("不要求客户端提交 pickupAt", () => {
+    expect(driverSubmission.parse(base)).toEqual(base);
   });
 
-  it("拒绝无效签收时间", () => {
-    expect(driverSubmission.safeParse({ ...base, pickupAt: "invalid" }).success).toBe(false);
+  it("剔除 pickupAt 和 Base64 图片等未知字段", () => {
+    const result = driverSubmission.parse({
+      ...base,
+      pickupAt: "2026-07-15T08:00:00.000Z",
+      photoDataUrl: "data:image/jpeg;base64,AQ==",
+    });
+    expect(result).toEqual(base);
+    expect(result).not.toHaveProperty("pickupAt");
+    expect(result).not.toHaveProperty("photoDataUrl");
   });
 
   it("姓名和联系电话均为必填", () => {
@@ -79,6 +84,7 @@ describe("提货二维码搜索", () => {
   const vehicle = {
     id: "vehicle-001",
     version: 1,
+    updateSequence: "1",
     vin: "LC0CE4CC5R0123456",
     model: "BYD TANG L EV",
     brand: "BYD",
@@ -90,7 +96,7 @@ describe("提货二维码搜索", () => {
     customer: "远洋汽车",
     inboundBoeNo: "BOE-IN-0716",
     status: "在库" as const,
-    updatedAt: "2026-07-16T00:00:00.000Z",
+    updatedAt: "2026-07-16",
   };
 
   it("可按多个单据信息关键词匹配车辆", () => {
@@ -129,27 +135,34 @@ describe("车辆录入校验", () => {
       portOfLoad: "上海港",
       portOfDischarge: "杰贝阿里港",
       vesselVoyage: "COSCO / 071E",
-      etd: "2026-06-05T00:00:00.000Z",
-      eta: "2026-06-21T04:00:00.000Z",
-      inboundAt: "2026-06-23T05:30:00.000Z",
-      merchantReleaseAt: "2026-07-08T10:20:00.000Z",
-      transferDocNoticeAt: "2026-07-09T06:15:00.000Z",
-      customerReleaseAt: "2026-07-10T06:15:00.000Z",
+      etd: "2026-06-05",
+      eta: "2026-06-21",
+      inboundAt: "2026-06-23",
+      merchantReleaseAt: "2026-07-08",
+      transferDocNoticeAt: "2026-07-09",
+      customerReleaseAt: "2026-07-10",
       pickupDetails: "提取一辆",
-      outboundAt: "2026-07-12T11:30:00.000Z",
-      outboundNoticeDeliveredAt: "2026-07-12T12:00:00.000Z",
-      customerReceiptDeliveredAt: "2026-07-12T12:30:00.000Z",
-      agentReceiptDeliveredAt: "2026-07-13T05:00:00.000Z",
+      outboundAt: "2026-07-12",
+      outboundNoticeDeliveredAt: "2026-07-12",
+      customerReceiptDeliveredAt: "2026-07-12",
+      agentReceiptDeliveredAt: "2026-07-13",
       notes: "随车钥匙两把",
     });
     expect(result.success).toBe(true);
   });
 
-  it("拒绝早于入库时间的出库时间", () => {
+  it("业务日期仅接受有效的 YYYY-MM-DD", () => {
+    expect(vehicleInput.safeParse({ ...base, inboundAt: "2026-07-12" }).success).toBe(true);
+    expect(vehicleInput.safeParse({ ...base, inboundAt: "2026-07-12T00:00:00.000Z" }).success).toBe(false);
+    expect(vehicleInput.safeParse({ ...base, inboundAt: "2026-02-29" }).success).toBe(false);
+    expect(vehicleInput.safeParse({ ...base, inboundAt: "2026-04-31" }).success).toBe(false);
+  });
+
+  it("拒绝早于入库日期的出库日期", () => {
     const result = vehicleInput.safeParse({
       ...base,
-      inboundAt: "2026-07-12T00:00:00.000Z",
-      outboundAt: "2026-07-11T00:00:00.000Z",
+      inboundAt: "2026-07-12",
+      outboundAt: "2026-07-11",
     });
     expect(result.success).toBe(false);
   });
@@ -211,6 +224,16 @@ describe("车辆录入校验", () => {
 });
 
 describe("系统时区", () => {
+  it("以中国零点作为日历日期边界", () => {
+    expect(chinaToday(new Date("2026-07-29T15:59:59.999Z"))).toBe("2026-07-29");
+    expect(chinaToday(new Date("2026-07-29T16:00:00.000Z"))).toBe("2026-07-30");
+  });
+
+  it("在 Prisma 边界无损转换和增减日历日期", () => {
+    expect(fromPrismaDate(toPrismaDate("2028-02-29"))).toBe("2028-02-29");
+    expect(addCalendarDays("2028-02-28", 1)).toBe("2028-02-29");
+  });
+
   it("统一按中国标准时间解释录入值", () => {
     const instant = zonedLocalToIso("2026-07-14T09:30", "Asia/Shanghai");
     expect(instant).toBe("2026-07-14T01:30:00.000Z");

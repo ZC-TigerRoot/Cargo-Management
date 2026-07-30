@@ -112,8 +112,8 @@ export default function VehiclePivotReport({ records }: { records: VehicleRecord
       </div> : <div className="pivot-empty">当前统计范围没有车辆，请调整筛选条件或统计范围。</div>}
 
       <footer className="pivot-notes">
-        <p><b>口径说明</b> 当前在库 = 有入库时间、无实际出库时间且司机未签收；商社未放 = 当前在库且无有效商社通知放车时间。人工修改的状态不会覆盖这两个事实口径。</p>
-        {summary.outboundNoticeCount > 0 && <p>当前在库中另有 <b>{summary.outboundNoticeCount}</b> 辆已交付出库通知、尚未填写实际出库时间。</p>}
+        <p><b>口径说明</b> 当前在库 = 有入库日期、无实际出库日期且司机未签收；商社未放 = 当前在库且无有效商社通知放车日期。人工修改的状态不会覆盖这两个事实口径。</p>
+        {summary.outboundNoticeCount > 0 && <p>当前在库中另有 <b>{summary.outboundNoticeCount}</b> 辆已交付出库通知、尚未填写实际出库日期。</p>}
         {(pivot.groupedRowValues > 0 || pivot.groupedColumnValues > 0) && <p>为保证大数据量下的操作流畅，低频分类已合并：行字段 {pivot.groupedRowValues} 项、列字段 {pivot.groupedColumnValues} 项。</p>}
         {qualityItems.length > 0 && <div className="pivot-quality"><span>数据待完善</span>{qualityItems.map(item => <i key={item.label}>{item.label} <b>{item.count}</b></i>)}</div>}
       </footer>

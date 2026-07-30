@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { Boxes, CarFront, CircleAlert, Download, LogOut, Menu, Plus, QrCode, Warehouse } from "lucide-react";
 import { can, inventoryDays, roleLabels } from "@/lib/domain";
-import { CHINA_TIME_ZONE, localInputValue } from "@/lib/datetime";
+import { CHINA_TIME_ZONE, chinaToday } from "@/lib/datetime";
 import { useVehicleRecords } from "@/lib/use-vehicle-records";
 import { useSession } from "@/lib/use-session";
 import SideNav from "@/components/side-nav";
@@ -21,8 +21,9 @@ export default function Dashboard() {
   const { records: rows, saveRecord, removeRecord, loading, loadError } = useVehicleRecords();
   const filtered = useMemo(() => filterVehicleRecords(rows, filters), [filters, rows]);
   const exportHref = vehicleExportUrl(filters);
-  const outboundToday = rows.filter(vehicle => vehicle.outboundAt &&
-    localInputValue(vehicle.outboundAt, CHINA_TIME_ZONE).slice(0, 10) === localInputValue(new Date().toISOString(), CHINA_TIME_ZONE).slice(0, 10)).length;
+  const now = new Date();
+  const today = chinaToday(now);
+  const outboundToday = rows.filter(vehicle => vehicle.outboundAt === today).length;
   const inStorage = rows.filter(vehicle => !vehicle.outboundAt && vehicle.status !== "待入库");
   const ageBuckets = [
     { n: "0–7天", count: inStorage.filter(vehicle => inventoryDays(vehicle.inboundAt) <= 7).length, c: "green" },
@@ -36,7 +37,6 @@ export default function Dashboard() {
     result[warehouse] = (result[warehouse] ?? 0) + 1;
     return result;
   }, {})).sort((left, right) => right[1] - left[1]);
-  const now = new Date();
   const todayLabel = new Intl.DateTimeFormat("zh-CN", { timeZone: CHINA_TIME_ZONE, year: "numeric", month: "long", day: "numeric", weekday: "short" }).format(now);
   const chinaHour = Number(new Intl.DateTimeFormat("en", { timeZone: CHINA_TIME_ZONE, hour: "2-digit", hourCycle: "h23" }).format(now));
   const greeting = chinaHour < 12 ? "上午好" : chinaHour < 18 ? "下午好" : "晚上好";

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { X } from "lucide-react";
 import { vehicleStatuses, type BusinessType, type VehicleFormValues, type VehicleRecord, type VehicleStatus } from "@/lib/domain";
-import { CHINA_TIME_ZONE, localInputValue, zonedLocalToIso } from "@/lib/datetime";
+import { CHINA_TIME_ZONE } from "@/lib/datetime";
 
 type Props = {
   defaultType?: BusinessType;
@@ -22,10 +22,7 @@ export default function VehicleFormModal({ defaultType = "overseas", initial, on
     setSubmitting(true);
     setError("");
     const text = (name: string) => String(formData.get(name) || "").trim() || undefined;
-    const date = (name: string) => {
-      const value = text(name);
-      return value ? zonedLocalToIso(value, CHINA_TIME_ZONE) : undefined;
-    };
+    const date = (name: string) => text(name);
     const payload: VehicleFormValues = {
       type,
       vin: text("vin"),
@@ -88,7 +85,6 @@ export default function VehicleFormModal({ defaultType = "overseas", initial, on
   }
 
   const value = (field: keyof VehicleRecord) => String(initial?.[field] ?? "");
-  const dateValue = (field: keyof VehicleRecord) => localInputValue(initial?.[field] as string | undefined, CHINA_TIME_ZONE);
 
   return <div className="modal-backdrop" onMouseDown={onClose}>
     <section className="modal vehicle-modal" onMouseDown={event => event.stopPropagation()}>
@@ -104,7 +100,7 @@ export default function VehicleFormModal({ defaultType = "overseas", initial, on
             <label>状态<select name="status" value={status} onChange={event => setStatus(event.target.value as VehicleStatus)}>{vehicleStatuses.map(item => <option value={item} key={item}>{item}</option>)}</select></label>
             <label>状态变更说明<input name="statusReason" required={status !== initial.status} disabled={status === initial.status} placeholder={status === initial.status ? "状态未变化" : "请填写本次变更原因"} /></label>
           </div>
-          <p className="status-help">手动变更状态将追加一条不可覆盖的业务事件。不手动调整时，系统会按业务时间自动更新状态；人工设定过的状态（如“异常”）将保持不变。</p>
+          <p className="status-help">手动变更状态将追加一条不可覆盖的业务事件。不手动调整时，系统会按业务日期自动更新状态；人工设定过的状态（如“异常”）将保持不变。</p>
         </fieldset>}
         <fieldset className="form-section">
           <legend>车辆与批次</legend>
@@ -119,8 +115,8 @@ export default function VehicleFormModal({ defaultType = "overseas", initial, on
             {type === "overseas" && <label>起运港<input name="portOfLoad" defaultValue={value("portOfLoad")} /></label>}
             {type === "overseas" && <label>目的港<input name="portOfDischarge" defaultValue={value("portOfDischarge")} /></label>}
             {type === "overseas" && <label>船名航次<input name="vesselVoyage" defaultValue={value("vesselVoyage")} /></label>}
-            {type === "overseas" && <label>ETD<input type="datetime-local" name="etd" defaultValue={dateValue("etd")} /></label>}
-            {type === "overseas" && <label>ETA<input type="datetime-local" name="eta" defaultValue={dateValue("eta")} /></label>}
+            {type === "overseas" && <label>ETD<input type="date" name="etd" defaultValue={value("etd")} /></label>}
+            {type === "overseas" && <label>ETA<input type="date" name="eta" defaultValue={value("eta")} /></label>}
           </div>
         </fieldset>
 
@@ -131,7 +127,7 @@ export default function VehicleFormModal({ defaultType = "overseas", initial, on
             <label>入库仓库名称<input name="warehouse" defaultValue={value("warehouse")} /></label>
             <label>所属客人<input name="customer" defaultValue={value("customer")} /></label>
             <label>系统时区<input value="中国标准时间（Asia/Shanghai）" disabled readOnly /></label>
-            <label>{type === "overseas" ? "入保税仓库时间" : "入仓库时间"}<input type="datetime-local" name="inboundAt" defaultValue={dateValue("inboundAt")} /></label>
+            <label>{type === "overseas" ? "入保税仓库日期" : "入仓库日期"}<input type="date" name="inboundAt" defaultValue={value("inboundAt")} /></label>
             <label>入库金额<input type="number" name="inboundAmount" min="0" step="0.01" defaultValue={value("inboundAmount")} /></label>
             <label>入库 BOE 号<input name="inboundBoeNo" defaultValue={value("inboundBoeNo")} /></label>
           </div>
@@ -140,22 +136,22 @@ export default function VehicleFormModal({ defaultType = "overseas", initial, on
         <fieldset className="form-section">
           <legend>放车、出库与单据</legend>
           <div className="form-grid">
-            <label>商社通知放车时间<input type="datetime-local" name="merchantReleaseAt" defaultValue={dateValue("merchantReleaseAt")} /></label>
-            {type === "overseas" && <label>客户通知做过户文件时间<input type="datetime-local" name="transferDocNoticeAt" defaultValue={dateValue("transferDocNoticeAt")} /></label>}
-            {type === "overseas" && <label>客户通知放车时间<input type="datetime-local" name="customerReleaseAt" defaultValue={dateValue("customerReleaseAt")} /></label>}
-            <label>实际出库时间<input type="datetime-local" name="outboundAt" defaultValue={dateValue("outboundAt")} /></label>
+            <label>商社通知放车日期<input type="date" name="merchantReleaseAt" defaultValue={value("merchantReleaseAt")} /></label>
+            {type === "overseas" && <label>客户通知做过户文件日期<input type="date" name="transferDocNoticeAt" defaultValue={value("transferDocNoticeAt")} /></label>}
+            {type === "overseas" && <label>客户通知放车日期<input type="date" name="customerReleaseAt" defaultValue={value("customerReleaseAt")} /></label>}
+            <label>实际出库日期<input type="date" name="outboundAt" defaultValue={value("outboundAt")} /></label>
             <label>出库 BOE 号<input name="outboundBoeNo" defaultValue={value("outboundBoeNo")} /></label>
             <label>BOE 抬头<input name="outboundBoeTitle" defaultValue={value("outboundBoeTitle")} /></label>
             <label>出库金额<input type="number" name="outboundAmount" min="0" step="0.01" defaultValue={value("outboundAmount")} /></label>
             <label className="span-2">出库提货明细<textarea name="pickupDetails" defaultValue={value("pickupDetails")} rows={3} /></label>
-            <label>出库通知单交付给商社日期<input type="datetime-local" name="outboundNoticeDeliveredAt" defaultValue={dateValue("outboundNoticeDeliveredAt")} /></label>
-            <label>客户交付签收单日期<input type="datetime-local" name="customerReceiptDeliveredAt" defaultValue={dateValue("customerReceiptDeliveredAt")} /></label>
-            <label>外代交付签收单给商社时间<input type="datetime-local" name="agentReceiptDeliveredAt" defaultValue={dateValue("agentReceiptDeliveredAt")} /></label>
+            <label>出库通知单交付给商社日期<input type="date" name="outboundNoticeDeliveredAt" defaultValue={value("outboundNoticeDeliveredAt")} /></label>
+            <label>客户交付签收单日期<input type="date" name="customerReceiptDeliveredAt" defaultValue={value("customerReceiptDeliveredAt")} /></label>
+            <label>外代交付签收单给商社日期<input type="date" name="agentReceiptDeliveredAt" defaultValue={value("agentReceiptDeliveredAt")} /></label>
             <label className="span-2">备注<textarea name="notes" defaultValue={value("notes")} rows={3} /></label>
           </div>
         </fieldset>
 
-        <p className="calculated-note">库存天数由入库时间和实际出库时间自动计算，无需填写。</p>
+        <p className="calculated-note">库存天数由入库日期和实际出库日期自动计算，无需填写。</p>
         {error && <p className="form-error" role="alert">{error}</p>}
         <div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>取消</button><button className="primary-button" disabled={submitting}>{submitting ? "保存中…" : "保存记录"}</button></div>
       </form>

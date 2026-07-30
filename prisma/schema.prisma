@@ -60,7 +60,8 @@ model User {
   customerId      String?
   customer        Customer?            @relation(fields: [customerId], references: [id])
   warehouseScopes UserWarehouseScope[]
-  createdAt       DateTime             @default(now())
+  createdAt       DateTime             @default(dbgenerated("((CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'::text))::date")) @db.Date
+  recordSequence  BigInt               @unique @default(autoincrement())
   events          InventoryEvent[]
   audits          AuditLog[]
 }
@@ -104,12 +105,12 @@ model BusinessBatch {
   portOfLoad      String?
   portOfDischarge String?
   vesselVoyage    String?
-  etd             DateTime?
-  eta             DateTime?
+  etd             DateTime?    @db.Date
+  eta             DateTime?    @db.Date
   manufacturer    String?
   extra           Json         @default("{}")
   vehicles        Vehicle[]
-  createdAt       DateTime     @default(now())
+  createdAt       DateTime     @default(dbgenerated("((CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'::text))::date")) @db.Date
 
   @@unique([type, referenceNo, warehouseKey])
   @@index([warehouseId])
@@ -123,10 +124,10 @@ model Vehicle {
   hsCode           String?
   status           VehicleStatus    @default(PENDING_INBOUND)
   version          Int              @default(1)
-  inboundAt        DateTime?
+  inboundAt        DateTime?        @db.Date
   inboundAmount    Decimal?         @db.Decimal(18, 2)
   inboundBoeNo     String?
-  outboundAt       DateTime?
+  outboundAt       DateTime?        @db.Date
   outboundBoeNo    String?
   outboundBoeTitle String?
   outboundAmount   Decimal?         @db.Decimal(18, 2)
@@ -142,43 +143,46 @@ model Vehicle {
   events           InventoryEvent[]
   pickupItems      PickupItem[]
   attachments      Attachment[]
-  createdAt        DateTime         @default(now())
-  updatedAt        DateTime         @updatedAt
+  createdAt        DateTime         @default(dbgenerated("((CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'::text))::date")) @db.Date
+  updatedAt        DateTime         @default(dbgenerated("((CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'::text))::date")) @db.Date
+  updateSequence   BigInt           @unique @default(autoincrement())
 }
 
 model InventoryEvent {
-  id             String    @id @default(cuid())
+  id             String       @id @default(cuid())
   vehicleId      String
-  vehicle        Vehicle   @relation(fields: [vehicleId], references: [id])
+  vehicle        Vehicle      @relation(fields: [vehicleId], references: [id])
   type           EventType
-  occurredAt     DateTime
-  payload        Json      @default("{}")
+  occurredAt     DateTime     @db.Date
+  payload        Json         @default("{}")
   correctionOfId String?
   actorId        String?
-  actor          User?     @relation(fields: [actorId], references: [id])
+  actor          User?        @relation(fields: [actorId], references: [id])
   attachments    Attachment[]
-  idempotencyKey String?   @unique
-  createdAt      DateTime  @default(now())
+  idempotencyKey String?      @unique
+  createdAt      DateTime     @default(dbgenerated("((CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'::text))::date")) @db.Date
+  recordSequence BigInt       @unique @default(autoincrement())
 
-  @@index([vehicleId, occurredAt])
+  @@index([vehicleId, recordSequence])
 }
 
 model PickupTask {
   id               String       @id @default(cuid())
   taskNo           String       @unique
   token            String       @unique
-  expiresAt        DateTime
-  revokedAt        DateTime?
-  submittedAt      DateTime?
+  expiresAt        DateTime     @db.Date
+  revokedAt        DateTime?    @db.Date
+  submittedAt      DateTime?    @db.Date
   driverSubmission Json?
   items            PickupItem[]
-  createdAt        DateTime     @default(now())
+  createdAt        DateTime     @default(dbgenerated("((CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'::text))::date")) @db.Date
+  recordSequence   BigInt       @unique @default(autoincrement())
 }
 
 model SystemSetting {
   id            String   @id @default("default")
   publicBaseUrl String?
-  updatedAt     DateTime @updatedAt
+  updatedAt     DateTime @default(dbgenerated("((CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'::text))::date")) @db.Date
 }
 
 model PickupItem {
@@ -200,25 +204,26 @@ model Attachment {
   fileName         String
   mimeType         String
   size             Int
-  createdAt        DateTime        @default(now())
+  createdAt        DateTime        @default(dbgenerated("((CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'::text))::date")) @db.Date
 
   @@index([objectKey])
   @@index([inventoryEventId])
 }
 
 model AuditLog {
-  id         String   @id @default(cuid())
-  actorId    String?
-  actor      User?    @relation(fields: [actorId], references: [id])
-  actorLabel String?
-  action     String
-  entityType String
-  entityId   String
-  before     Json?
-  after      Json?
-  reason     String?
-  ip         String?
-  createdAt  DateTime @default(now())
+  id             String   @id @default(cuid())
+  actorId        String?
+  actor          User?    @relation(fields: [actorId], references: [id])
+  actorLabel     String?
+  action         String
+  entityType     String
+  entityId       String
+  before         Json?
+  after          Json?
+  reason         String?
+  ip             String?
+  createdAt      DateTime @default(dbgenerated("((CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'::text))::date")) @db.Date
+  recordSequence BigInt   @unique @default(autoincrement())
 
-  @@index([entityType, entityId, createdAt])
+  @@index([entityType, entityId, recordSequence])
 }

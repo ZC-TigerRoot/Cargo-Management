@@ -3,16 +3,16 @@ import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { assertSameOrigin, AuthorizationError, pickupTaskScopeWhere, requestIp, requireUser, vehicleScopeWhere } from "@/lib/auth";
+import { addCalendarDays, chinaToday, fromPrismaDate, toPrismaDate } from "@/lib/datetime";
 import { prisma } from "@/lib/prisma";
 import { buildPickupUrl, getPublicBaseUrl } from "@/lib/public-url";
 import { vehicleStatusNames } from "@/lib/vehicle-status";
 
 const pickupInput = z.object({
   vehicleIds: z.array(z.string().min(1)).min(1).max(50),
-  expiresAt: z.iso.datetime(),
+  expiresAt: z.iso.date(),
 });
 const revokeInput = z.object({ id: z.string().min(1).max(128), action: z.literal("revoke") });
-const MAX_PICKUP_TASK_AGE_MS = 30 * 24 * 60 * 60 * 1_000;
 
 class PickupCreationError extends Error {
   constructor(public code: string, message: string, public status: 404 | 409) {
@@ -23,16 +23,17 @@ class PickupCreationError extends Error {
 function taskData(task: {
   id: string; taskNo: string; token: string; expiresAt: Date; revokedAt: Date | null; submittedAt: Date | null; createdAt: Date;
   items: { vehicle: { id: string; vin: string | null; model: string | null } }[];
-}, publicBaseUrl: string) {
+}, publicBaseUrl: string, today = chinaToday()) {
   const tokenPath = `/driver/${encodeURIComponent(task.token)}`;
+  const expiresAt = fromPrismaDate(task.expiresAt);
   return {
     id: task.id,
     taskNo: task.taskNo,
     tokenPath,
     pickupUrl: buildPickupUrl(publicBaseUrl, task.token),
-    expiresAt: task.expiresAt.toISOString(),
-    createdAt: task.createdAt.toISOString(),
-    status: task.revokedAt ? "revoked" : task.submittedAt ? "submitted" : task.expiresAt <= new Date() ? "expired" : "pending",
+    expiresAt,
+    createdAt: fromPrismaDate(task.createdAt),
+    status: task.revokedAt ? "revoked" : task.submittedAt ? "submitted" : expiresAt < today ? "expired" : "pending",
     vehicles: task.items.map(item => ({ ...item.vehicle, vin: item.vehicle.vin ?? undefined, model: item.vehicle.model ?? undefined })),
   };
 }
@@ -42,11 +43,12 @@ const include = { items: { include: { vehicle: { select: { id: true, vin: true, 
 export async function GET(req: NextRequest) {
   try {
     const user = await requireUser("coordinatePickups");
+    const today = chinaToday();
     const [tasks, publicBaseUrl] = await Promise.all([
-      prisma.pickupTask.findMany({ where: pickupTaskScopeWhere(user), include, orderBy: { createdAt: "desc" }, take: 100 }),
+      prisma.pickupTask.findMany({ where: pickupTaskScopeWhere(user), include, orderBy: { recordSequence: "desc" }, take: 100 }),
       getPublicBaseUrl(req.nextUrl.origin),
     ]);
-    return NextResponse.json({ data: tasks.map(task => taskData(task, publicBaseUrl)) });
+    return NextResponse.json({ data: tasks.map(task => taskData(task, publicBaseUrl, today)) });
   } catch (error) {
     if (error instanceof AuthorizationError) return NextResponse.json({ error: "UNAUTHENTICATED", message: error.message }, { status: error.status });
     console.error(error);
@@ -60,12 +62,13 @@ export async function POST(req: NextRequest) {
     assertSameOrigin(req);
     const parsed = pickupInput.safeParse(await req.json());
     if (!parsed.success) return NextResponse.json({ error: "VALIDATION_ERROR", issues: parsed.error.flatten() }, { status: 422 });
-    const expiresAt = new Date(parsed.data.expiresAt);
-    const now = new Date();
-    if (expiresAt <= now) return NextResponse.json({ error: "INVALID_EXPIRY", message: "二维码有效期必须晚于当前时间" }, { status: 422 });
-    if (expiresAt.getTime() - now.getTime() > MAX_PICKUP_TASK_AGE_MS) {
+    const today = chinaToday();
+    if (parsed.data.expiresAt < today) return NextResponse.json({ error: "INVALID_EXPIRY", message: "二维码有效期不能早于今天" }, { status: 422 });
+    if (parsed.data.expiresAt > addCalendarDays(today, 30)) {
       return NextResponse.json({ error: "INVALID_EXPIRY", message: "二维码有效期不能超过 30 天" }, { status: 422 });
     }
+    const expiresAt = toPrismaDate(parsed.data.expiresAt);
+    const todayDate = toPrismaDate(today);
     const vehicleIds = [...new Set(parsed.data.vehicleIds)];
     const scopedVehicles = await prisma.vehicle.findMany({
       where: { id: { in: vehicleIds }, ...vehicleScopeWhere(user) },
@@ -75,7 +78,7 @@ export async function POST(req: NextRequest) {
 
     const token = randomBytes(24).toString("base64url");
     const publicBaseUrl = await getPublicBaseUrl(req.nextUrl.origin);
-    const date = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date()).replaceAll("-", "");
+    const date = today.replaceAll("-", "");
     const taskNo = `PU-${date}-${randomBytes(3).toString("hex").toUpperCase()}`;
     const task = await prisma.$transaction(async tx => {
       // Serialize task creation per vehicle so concurrent requests cannot both
@@ -100,7 +103,7 @@ export async function POST(req: NextRequest) {
         throw new PickupCreationError("VEHICLE_NOT_AVAILABLE", `以下车辆当前不可提货：${labels.join("、")}`, 409);
       }
       const activeItems = await tx.pickupItem.findMany({
-        where: { vehicleId: { in: vehicleIds }, pickupTask: { submittedAt: null, revokedAt: null, expiresAt: { gt: new Date() } } },
+        where: { vehicleId: { in: vehicleIds }, pickupTask: { submittedAt: null, revokedAt: null, expiresAt: { gte: todayDate } } },
         select: { vehicleId: true },
       });
       if (activeItems.length) {
@@ -123,10 +126,10 @@ export async function POST(req: NextRequest) {
           data: {
             vehicleId: vehicle.id,
             type: "PICKUP_CREATED",
-            occurredAt: new Date(),
+            occurredAt: todayDate,
             actorId: user.id,
             idempotencyKey: `${created.id}:${vehicle.id}`,
-            payload: { taskNo, expiresAt: expiresAt.toISOString() },
+            payload: { taskNo, expiresAt: fromPrismaDate(expiresAt) },
           },
         });
         await tx.auditLog.create({
@@ -147,13 +150,13 @@ export async function POST(req: NextRequest) {
           action: "PICKUP_CREATED",
           entityType: "PickupTask",
           entityId: created.id,
-          after: { taskNo, expiresAt: expiresAt.toISOString(), vehicleIds },
+          after: { taskNo, expiresAt: fromPrismaDate(expiresAt), vehicleIds },
           ip: requestIp(req),
         },
       });
       return created;
     });
-    return NextResponse.json({ data: taskData(task, publicBaseUrl) }, { status: 201 });
+    return NextResponse.json({ data: taskData(task, publicBaseUrl, today) }, { status: 201 });
   } catch (error) {
     if (error instanceof PickupCreationError) return NextResponse.json({ error: error.code, message: error.message }, { status: error.status });
     if (error instanceof AuthorizationError) return NextResponse.json({ error: error.status === 401 ? "UNAUTHENTICATED" : "FORBIDDEN", message: error.message }, { status: error.status });
@@ -172,17 +175,21 @@ export async function PATCH(req: NextRequest) {
 
     const task = await prisma.pickupTask.findFirst({
       where: { id: parsed.data.id, ...pickupTaskScopeWhere(user) },
-      select: { id: true, taskNo: true, submittedAt: true, revokedAt: true },
+      select: { id: true, taskNo: true, expiresAt: true, submittedAt: true, revokedAt: true },
     });
     if (!task) return NextResponse.json({ error: "NOT_FOUND", message: "提货任务不存在" }, { status: 404 });
     if (task.submittedAt) return NextResponse.json({ error: "ALREADY_SUBMITTED", message: "已签收的提货任务不能撤销" }, { status: 409 });
-    if (task.revokedAt) return NextResponse.json({ data: { id: task.id, status: "revoked", revokedAt: task.revokedAt.toISOString() } });
+    if (task.revokedAt) return NextResponse.json({ data: { id: task.id, status: "revoked", revokedAt: fromPrismaDate(task.revokedAt) } });
 
-    const now = new Date();
+    const today = chinaToday();
+    if (fromPrismaDate(task.expiresAt) < today) {
+      return NextResponse.json({ error: "TASK_EXPIRED", message: "已过期的提货任务不能撤销" }, { status: 409 });
+    }
+    const revokedAt = toPrismaDate(today);
     const revoked = await prisma.$transaction(async tx => {
       const updated = await tx.pickupTask.updateMany({
-        where: { id: task.id, submittedAt: null, revokedAt: null },
-        data: { revokedAt: now },
+        where: { id: task.id, submittedAt: null, revokedAt: null, expiresAt: { gte: revokedAt } },
+        data: { revokedAt },
       });
       if (updated.count !== 1) return false;
       await tx.auditLog.create({
@@ -192,14 +199,14 @@ export async function PATCH(req: NextRequest) {
           entityType: "PickupTask",
           entityId: task.id,
           before: { taskNo: task.taskNo, status: "pending", revokedAt: null },
-          after: { taskNo: task.taskNo, status: "revoked", revokedAt: now.toISOString() },
+          after: { taskNo: task.taskNo, status: "revoked", revokedAt: fromPrismaDate(revokedAt) },
           ip: requestIp(req),
         },
       });
       return true;
     });
     if (!revoked) return NextResponse.json({ error: "SUBMISSION_CONFLICT", message: "任务状态已变化，请刷新后重试" }, { status: 409 });
-    return NextResponse.json({ data: { id: task.id, status: "revoked", revokedAt: now.toISOString() } });
+    return NextResponse.json({ data: { id: task.id, status: "revoked", revokedAt: fromPrismaDate(revokedAt) } });
   } catch (error) {
     if (error instanceof AuthorizationError) return NextResponse.json({ error: error.status === 401 ? "UNAUTHENTICATED" : "FORBIDDEN", message: error.message }, { status: error.status });
     if (error instanceof SyntaxError) return NextResponse.json({ error: "INVALID_JSON", message: "请求内容不是有效的 JSON" }, { status: 400 });

@@ -3,6 +3,18 @@ import bcrypt from "bcryptjs";
 
 import { databaseUrlFromEnv } from "../database-url.mjs";
 
+function prismaDateAfterToday(days) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date()).map(part => [part.type, part.value]));
+  const date = new Date(Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day)));
+  date.setUTCDate(date.getUTCDate() + days);
+  return date;
+}
+
 const prisma = new PrismaClient({ datasourceUrl: databaseUrlFromEnv() });
 const email = process.env.ADMIN_EMAIL?.trim().toLowerCase();
 const password = process.env.ADMIN_PASSWORD;
@@ -45,17 +57,18 @@ try {
       update: { status: "PENDING_PICKUP", batchId: batch.id, customerId: customer.id, warehouseId: warehouse.id },
     });
     const demoToken = "demo-pickup";
+    const expiresAt = prismaDateAfterToday(7);
     const task = await prisma.pickupTask.upsert({
       where: { taskNo: "PU-DEMO-001" },
       create: {
         taskNo: "PU-DEMO-001",
         token: demoToken,
-        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        expiresAt,
         items: { create: { vehicleId: vehicle.id } },
       },
       update: {
         token: demoToken,
-        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        expiresAt,
         revokedAt: null,
         submittedAt: null,
         driverSubmission: Prisma.DbNull,

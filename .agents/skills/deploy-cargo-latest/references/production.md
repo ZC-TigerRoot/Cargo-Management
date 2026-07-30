@@ -36,7 +36,7 @@ The server was previously observed as AlmaLinux with a 4 GB swap file, Node 24, 
   - `scripts/standalone-supervisor.cjs` copied as `supervisor.cjs`
 - Require both Prisma engine targets: `rhel-openssl-3.0.x` and `rhel-openssl-1.0.x`.
 - Keep environment values out of the release. The only `.env` entry allowed in the final app directory is an absolute symlink to `/www/wwwroot/Cargo-Management/shared/.env`.
-- Run `pnpm db:deploy`; never run `pnpm db:seed` for an update deployment.
+- Run `pnpm db:deploy`; never run `pnpm db:seed` for an update deployment. If `20260730100000_calendar_dates` is pending, stop only the Cargo service before applying it, then switch to the new application build before restarting; the old build must not receive requests against the date-only schema.
 
 ## Minimum health checks
 

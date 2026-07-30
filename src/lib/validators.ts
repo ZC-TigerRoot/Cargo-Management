@@ -6,7 +6,7 @@ const optionalText = z.string().trim().max(2_000, "文本内容不能超过 2000
 const optionalLongText = z.string().trim().max(5_000, "文本内容不能超过 5000 个字符").optional().transform(value => value || undefined);
 const optionalVin = z.string().trim().max(100, "车架号不能超过 100 个字符").optional()
   .transform(value => value ? value.toUpperCase() : undefined);
-const optionalDateTime = z.iso.datetime({ offset: true }).optional();
+const optionalDate = z.iso.date().optional();
 const optionalAmount = z.union([z.string().trim(), z.number().finite()]).optional().transform((value, ctx) => {
   if (value === undefined || value === "") return undefined;
   const normalized = typeof value === "number" ? value.toFixed(2) : value;
@@ -27,33 +27,33 @@ export const vehiclePayload = z.object({
   portOfLoad: optionalText,
   portOfDischarge: optionalText,
   vesselVoyage: optionalText,
-  etd: optionalDateTime,
-  eta: optionalDateTime,
+  etd: optionalDate,
+  eta: optionalDate,
   manufacturer: optionalText,
   warehouseLocation: optionalText,
   warehouse: optionalText,
   warehouseTimezone: z.literal(CHINA_TIME_ZONE),
   customer: optionalText,
-  inboundAt: optionalDateTime,
+  inboundAt: optionalDate,
   inboundAmount: optionalAmount,
   inboundBoeNo: optionalText,
-  merchantReleaseAt: optionalDateTime,
-  transferDocNoticeAt: optionalDateTime,
-  customerReleaseAt: optionalDateTime,
+  merchantReleaseAt: optionalDate,
+  transferDocNoticeAt: optionalDate,
+  customerReleaseAt: optionalDate,
   pickupDetails: optionalLongText,
-  outboundAt: optionalDateTime,
+  outboundAt: optionalDate,
   outboundBoeNo: optionalText,
   outboundBoeTitle: optionalText,
   outboundAmount: optionalAmount,
-  outboundNoticeDeliveredAt: optionalDateTime,
-  customerReceiptDeliveredAt: optionalDateTime,
-  agentReceiptDeliveredAt: optionalDateTime,
+  outboundNoticeDeliveredAt: optionalDate,
+  customerReceiptDeliveredAt: optionalDate,
+  agentReceiptDeliveredAt: optionalDate,
   notes: optionalLongText,
 }).superRefine((data, ctx) => {
-  if (data.inboundAt && data.outboundAt && new Date(data.inboundAt) > new Date(data.outboundAt)) {
-    ctx.addIssue({ code: "custom", path: ["outboundAt"], message: "实际出库时间不能早于入库时间" });
+  if (data.inboundAt && data.outboundAt && data.inboundAt > data.outboundAt) {
+    ctx.addIssue({ code: "custom", path: ["outboundAt"], message: "实际出库日期不能早于入库日期" });
   }
-  if (data.etd && data.eta && new Date(data.etd) > new Date(data.eta)) {
+  if (data.etd && data.eta && data.etd > data.eta) {
     ctx.addIssue({ code: "custom", path: ["eta"], message: "ETA 不能早于 ETD" });
   }
 });
@@ -71,7 +71,6 @@ export const vehicleUpdateInput = vehiclePayload.and(z.object({
 });
 
 export const driverSubmission = z.object({
-  pickupAt: z.iso.datetime(),
   idempotencyKey: z.string().min(8).max(128),
   driverName: z.string().trim().min(1, "请填写姓名").max(100, "姓名不能超过 100 个字符"),
   driverPhone: z.string().trim()

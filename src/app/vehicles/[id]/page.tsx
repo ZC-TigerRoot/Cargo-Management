@@ -11,10 +11,12 @@ import { useSession } from "@/lib/use-session";
 import VehicleFormModal from "@/components/vehicle-form-modal";
 
 const formatDate = (value: string | undefined, timeZone: string) => businessDate(value, timeZone) || "—";
+const isDateField = (field: string) => field.endsWith("At") || field === "etd" || field === "eta";
 const auditValue = (field: string, value: string | undefined) => {
   if (!value) return "空";
-  return field.endsWith("At") || field === "etd" || field === "eta" ? formatDate(value, "Asia/Shanghai") : value;
+  return isDateField(field) ? formatDate(value, "Asia/Shanghai") : value;
 };
+const auditLabel = (field: string, label: string) => isDateField(field) ? label.replaceAll("时间", "日期") : label;
 const fileSize = (value: number) => value >= 1_000_000 ? `${(value / 1_000_000).toFixed(1)} MB` : `${Math.ceil(value / 1_000)} KB`;
 
 const timelineFields: { field: keyof VehicleRecord; title: string }[] = [
@@ -66,7 +68,7 @@ export default function VehicleDetailPage() {
     return timelineFields
       .map(item => ({ ...item, time: vehicle[item.field] as string | undefined, recordedAt: undefined, actor: undefined, reason: undefined, details: undefined, attachments: undefined }))
       .filter((item): item is typeof item & { time: string } => Boolean(item.time))
-      .sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
+      .sort((a, b) => a.time.localeCompare(b.time));
   }, [vehicle]);
 
   if (loading) return <main className="detail-shell"><p className="muted">正在加载车辆档案…</p></main>;
@@ -77,10 +79,10 @@ export default function VehicleDetailPage() {
     ? [["HS#", vehicle.hsCode], ["起运港", vehicle.portOfLoad], ["目的港", vehicle.portOfDischarge], ["船名航次", vehicle.vesselVoyage], ["ETD", formatDate(vehicle.etd, vehicle.warehouseTimezone)], ["ETA", formatDate(vehicle.eta, vehicle.warehouseTimezone)]]
     : [["品牌", vehicle.brand], ["生产商", vehicle.manufacturer]];
   const releaseFacts: [string, string | undefined][] = [
-    ["商社通知放车时间", formatDate(vehicle.merchantReleaseAt, vehicle.warehouseTimezone)],
+    ["商社通知放车日期", formatDate(vehicle.merchantReleaseAt, vehicle.warehouseTimezone)],
     ...(overseas ? [
-      ["客户通知做过户文件时间", formatDate(vehicle.transferDocNoticeAt, vehicle.warehouseTimezone)],
-      ["客户通知放车时间", formatDate(vehicle.customerReleaseAt, vehicle.warehouseTimezone)],
+      ["客户通知做过户文件日期", formatDate(vehicle.transferDocNoticeAt, vehicle.warehouseTimezone)],
+      ["客户通知放车日期", formatDate(vehicle.customerReleaseAt, vehicle.warehouseTimezone)],
     ] as [string, string | undefined][] : []),
   ];
   const facts: [string, string | undefined][] = [
@@ -92,17 +94,17 @@ export default function VehicleDetailPage() {
     [overseas ? "保税仓地点" : "仓库地点", vehicle.warehouseLocation],
     ["入库仓库名称", vehicle.warehouse],
     ["仓库时区", vehicle.warehouseTimezone],
-    [overseas ? "入保税仓时间" : "入仓时间", formatDate(vehicle.inboundAt, vehicle.warehouseTimezone)],
+    [overseas ? "入保税仓日期" : "入仓日期", formatDate(vehicle.inboundAt, vehicle.warehouseTimezone)],
     ["入库金额", vehicle.inboundAmount],
     ["入库 BOE 号", vehicle.inboundBoeNo],
     ...releaseFacts,
-    ["实际出库时间", formatDate(vehicle.outboundAt, vehicle.warehouseTimezone)],
+    ["实际出库日期", formatDate(vehicle.outboundAt, vehicle.warehouseTimezone)],
     ["出库 BOE 号", vehicle.outboundBoeNo],
     ["BOE 抬头", vehicle.outboundBoeTitle],
     ["出库金额", vehicle.outboundAmount],
     ["出库通知单交付给商社日期", formatDate(vehicle.outboundNoticeDeliveredAt, vehicle.warehouseTimezone)],
     ["客户交付签收单日期", formatDate(vehicle.customerReceiptDeliveredAt, vehicle.warehouseTimezone)],
-    ["外代交付签收单给商社时间", formatDate(vehicle.agentReceiptDeliveredAt, vehicle.warehouseTimezone)],
+    ["外代交付签收单给商社日期", formatDate(vehicle.agentReceiptDeliveredAt, vehicle.warehouseTimezone)],
   ];
 
   async function removeVehicle() {
@@ -127,8 +129,8 @@ export default function VehicleDetailPage() {
     <section className="detail-hero"><div><span className={`status status-${vehicle.status}`}>{vehicle.status}</span><p className="eyebrow">车辆档案</p><h1>{vehicle.model || "未填写车型"}</h1><p className="vin">{vehicle.vin || "未填写车架号"}</p></div><div className="detail-days"><strong>{inventoryDays(vehicle.inboundAt, vehicle.outboundAt)}</strong><span>库存天数</span></div></section>
     <div className="detail-grid">
       <section className="panel detail-main"><h2>业务信息</h2><div className="fact-grid">{facts.map(([label, content]) => <div key={label}><span>{label}</span><b>{label.includes("地点") || label.includes("仓库") ? <MapPin size={15} /> : label.includes("时间") || label.includes("日期") ? <CalendarDays size={15} /> : <ShieldCheck size={15} />}{content || "—"}</b></div>)}</div><div className="notice"><b>出库提货明细</b><p>{vehicle.pickupDetails || "—"}</p></div>{vehicle.notes && <div className="notice"><b>备注</b><p>{vehicle.notes}</p></div>}</section>
-      <section className="panel"><h2>不可覆盖的业务时间线</h2>{timeline.length ? <div className="timeline">{timeline.map((item, index) => <div className="timeline-item" key={`${item.field}-${item.time}`}><i className={index === timeline.length - 1 ? "active" : ""} /><div><b>{item.title}</b><time>{formatDate(item.time, vehicle.warehouseTimezone)}</time><p>{item.reason || "该业务事件已记录；后续修改只会追加更正记录。"}</p>{item.details?.length ? <dl className="timeline-details">{item.details.map(detail => <div key={detail.label}><dt>{detail.label}</dt><dd>{detail.value}</dd></div>)}</dl> : null}<small>{item.actor || "系统业务事件"}{item.recordedAt ? ` · 记录于 ${formatDate(item.recordedAt, vehicle.warehouseTimezone)}` : ""}</small>{item.attachments?.length ? <div className="timeline-attachments">{item.attachments.map(attachment => <a href={attachment.url} target="_blank" rel="noreferrer" key={attachment.id} title="点击查看原图"><Image src={attachment.url} width={520} height={320} unoptimized alt={`${item.title}现场照片`} /><span>{attachment.fileName} · {fileSize(attachment.size)}</span></a>)}</div> : null}</div></div>)}</div> : <p className="muted">尚未录入业务节点时间。</p>}</section>
-      <section className="panel audit-panel"><h2>数据修改记录</h2><p className="audit-timezone">所有记录均按中国标准时间显示</p>{vehicle.auditTrail?.length ? <div className="audit-list">{[...vehicle.auditTrail].reverse().map(entry => <article key={entry.id}><div><b>{entry.action}</b><time>{formatDate(entry.changedAt, vehicle.warehouseTimezone)}</time></div><small>{entry.actor}</small>{entry.changes.length ? <ul>{entry.changes.map(change => <li key={change.field}><span>{change.label}</span><del>{auditValue(change.field, change.before)}</del><i>→</i><ins>{auditValue(change.field, change.after)}</ins></li>)}</ul> : <p>已保存完整操作记录</p>}</article>)}</div> : <p className="muted">暂无数据修改记录。</p>}</section>
+      <section className="panel"><h2>不可覆盖的业务时间线</h2>{timeline.length ? <div className="timeline">{timeline.map((item, index) => <div className="timeline-item" key={`${item.field}-${item.time}`}><i className={index === timeline.length - 1 ? "active" : ""} /><div><b>{item.title}</b><time>{formatDate(item.time, vehicle.warehouseTimezone)}</time><p>{item.reason || "该业务事件已记录；后续修改只会追加更正记录。"}</p>{item.details?.length ? <dl className="timeline-details">{item.details.map(detail => <div key={detail.label}><dt>{detail.label}</dt><dd>{detail.value}</dd></div>)}</dl> : null}<small>{item.actor || "系统业务事件"}{item.recordedAt ? ` · 记录于 ${formatDate(item.recordedAt, vehicle.warehouseTimezone)}` : ""}</small>{item.attachments?.length ? <div className="timeline-attachments">{item.attachments.map(attachment => <a href={attachment.url} target="_blank" rel="noreferrer" key={attachment.id} title="点击查看原图"><Image src={attachment.url} width={520} height={320} unoptimized alt={`${item.title}现场照片`} /><span>{attachment.fileName} · {fileSize(attachment.size)}</span></a>)}</div> : null}</div></div>)}</div> : <p className="muted">尚未录入业务节点日期。</p>}</section>
+      <section className="panel audit-panel"><h2>数据修改记录</h2><p className="audit-timezone">所有记录日期均按中国标准时间显示</p>{vehicle.auditTrail?.length ? <div className="audit-list">{[...vehicle.auditTrail].reverse().map(entry => <article key={entry.id}><div><b>{entry.action}</b><time>{formatDate(entry.changedAt, vehicle.warehouseTimezone)}</time></div><small>{entry.actor}</small>{entry.changes.length ? <ul>{entry.changes.map(change => <li key={change.field}><span>{auditLabel(change.field, change.label)}</span><del>{auditValue(change.field, change.before)}</del><i>→</i><ins>{auditValue(change.field, change.after)}</ins></li>)}</ul> : <p>已保存完整操作记录</p>}</article>)}</div> : <p className="muted">暂无数据修改记录。</p>}</section>
     </div>
     {editing && <VehicleFormModal initial={vehicle} onClose={() => setEditing(false)} onSaved={setVehicle} />}
   </main>;

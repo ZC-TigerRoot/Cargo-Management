@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEven
 import Link from "next/link";
 import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, GripVertical, SlidersHorizontal, Trash2 } from "lucide-react";
 import { inventoryDays, type VehicleRecord } from "@/lib/domain";
-import { chinaDateTime } from "@/lib/datetime";
+import { formatCalendarDate } from "@/lib/datetime";
 
 type Column = {
   id: string;
@@ -24,14 +24,14 @@ const columns: Column[] = [
   { id: "model", label: "车型", value: vehicle => vehicle.model },
   { id: "brand", label: "品牌", value: vehicle => vehicle.brand },
   { id: "referenceNo", label: "提单号 / PO#", value: vehicle => vehicle.referenceNo },
-  { id: "inboundAt", label: "入库时间", value: vehicle => vehicle.inboundAt, render: vehicle => vehicle.inboundAt ? chinaDateTime(vehicle.inboundAt) : "—" },
+  { id: "inboundAt", label: "入库日期", value: vehicle => vehicle.inboundAt, render: vehicle => vehicle.inboundAt ? formatCalendarDate(vehicle.inboundAt) : "—" },
   { id: "inboundAmount", label: "入库金额", value: vehicle => vehicle.inboundAmount ? Number(vehicle.inboundAmount) : undefined, render: vehicle => vehicle.inboundAmount || "—" },
   { id: "inboundBoeNo", label: "入库 BOE 号", value: vehicle => vehicle.inboundBoeNo },
-  { id: "outboundAt", label: "出库时间", value: vehicle => vehicle.outboundAt, render: vehicle => vehicle.outboundAt ? chinaDateTime(vehicle.outboundAt) : "—" },
+  { id: "outboundAt", label: "出库日期", value: vehicle => vehicle.outboundAt, render: vehicle => vehicle.outboundAt ? formatCalendarDate(vehicle.outboundAt) : "—" },
   { id: "outboundBoeNo", label: "出库 BOE 号", value: vehicle => vehicle.outboundBoeNo },
   { id: "outboundBoeTitle", label: "BOE 抬头", value: vehicle => vehicle.outboundBoeTitle },
   { id: "outboundAmount", label: "出库金额", value: vehicle => vehicle.outboundAmount ? Number(vehicle.outboundAmount) : undefined, render: vehicle => vehicle.outboundAmount || "—" },
-  { id: "updatedAt", label: "最后修改时间", value: vehicle => vehicle.updatedAt, render: vehicle => chinaDateTime(vehicle.updatedAt) },
+  { id: "updatedAt", label: "最后修改日期", value: vehicle => vehicle.updatedAt, render: vehicle => formatCalendarDate(vehicle.updatedAt) },
 ];
 
 const defaultOrder = ["vehicle", "business", "warehouse", "customer", "inventoryDays", "status", ...columns.map(column => column.id).filter(id => !["vehicle", "business", "warehouse", "customer", "inventoryDays", "status"].includes(id))];
@@ -102,7 +102,13 @@ export default function VehicleTable({ rows, storageKey = "cargo.vehicle-table",
       const result = typeof a === "number" && typeof b === "number"
         ? a - b
         : String(a).localeCompare(String(b), "zh-CN", { numeric: true, sensitivity: "base" });
-      return result === 0 ? left.index - right.index : direction === "asc" ? result : -result;
+      let ordered = result;
+      if (ordered === 0 && sort === "updatedAt") {
+        const leftSequence = BigInt(left.vehicle.updateSequence);
+        const rightSequence = BigInt(right.vehicle.updateSequence);
+        ordered = leftSequence < rightSequence ? -1 : leftSequence > rightSequence ? 1 : 0;
+      }
+      return ordered === 0 ? left.index - right.index : direction === "asc" ? ordered : -ordered;
     }).map(item => item.vehicle);
   }, [direction, rows, sort]);
   const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));

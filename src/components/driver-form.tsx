@@ -1,7 +1,8 @@
 "use client";
 
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { Camera, CheckCircle2, Clock3, Phone, ShieldCheck, Truck, UserRound } from "lucide-react";
+import { CalendarDays, Camera, CheckCircle2, Phone, ShieldCheck, Truck, UserRound } from "lucide-react";
+import { formatCalendarDate } from "@/lib/datetime";
 
 type Task = {
   taskNo: string;
@@ -96,10 +97,7 @@ async function readApiResponse(response: Response): Promise<DriverApiResponse> {
   throw new Error(`服务器响应异常（${response.status}），请稍后重试`);
 }
 
-const showTime = (value: string) => new Intl.DateTimeFormat("zh-CN", {
-  timeZone: "Asia/Shanghai",
-  year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false,
-}).format(new Date(value));
+const showDate = (value: string) => formatCalendarDate(value) || "—";
 
 const maskVin = (vin?: string) => vin ? `············${vin.slice(-6)}` : "未填写";
 
@@ -145,7 +143,6 @@ export default function DriverForm({ token }: { token: string }) {
       idempotencyKey.current ??= crypto.randomUUID();
       const optimizedPhoto = await optimizePhoto(photo);
       form.set("photo", optimizedPhoto, optimizedPhoto.name);
-      form.set("pickupAt", new Date().toISOString());
       form.set("idempotencyKey", idempotencyKey.current);
       const response = await fetch(`/api/v1/driver/${encodeURIComponent(token)}`, {
         method: "POST",
@@ -167,12 +164,12 @@ export default function DriverForm({ token }: { token: string }) {
 
   if (loading) return <main className="driver-page"><section className="driver-card"><p className="muted">正在验证提货任务…</p></section></main>;
   if (!task) return <main className="driver-page"><section className="driver-card"><h1>无法打开提货任务</h1><p className="form-error">{error}</p></section></main>;
-  if (receipt) return <main className="driver-page"><section className="driver-card success-card"><CheckCircle2/><p className="eyebrow">上传成功</p><h1>提车凭证已提交</h1><p>签收编号 {receipt.receiptNo}</p><div className="receipt"><span>提交时间</span><b>{showTime(receipt.submittedAt)}</b><span>车辆</span><b>{task.vehicles.map(vehicle => vehicle.model || "未填写车型").join("、")}</b>{receipt.driverLabel && <><span>司机名称</span><b>{receipt.driverLabel}</b></>}{receipt.driverName && <><span>姓名</span><b>{receipt.driverName}</b></>}{receipt.driverPhone && <><span>联系电话</span><b>{receipt.driverPhone}</b></>}</div><p className="muted">本页面可安全关闭，仓库人员将继续完成核验。</p></section></main>;
+  if (receipt) return <main className="driver-page"><section className="driver-card success-card"><CheckCircle2/><p className="eyebrow">上传成功</p><h1>提车凭证已提交</h1><p>签收编号 {receipt.receiptNo}</p><div className="receipt"><span>提交日期</span><b>{showDate(receipt.submittedAt)}</b><span>车辆</span><b>{task.vehicles.map(vehicle => vehicle.model || "未填写车型").join("、")}</b>{receipt.driverLabel && <><span>司机名称</span><b>{receipt.driverLabel}</b></>}{receipt.driverName && <><span>姓名</span><b>{receipt.driverName}</b></>}{receipt.driverPhone && <><span>联系电话</span><b>{receipt.driverPhone}</b></>}</div><p className="muted">本页面可安全关闭，仓库人员将继续完成核验。</p></section></main>;
 
   return <main className="driver-page"><section className="driver-card">
     <div className="driver-brand"><span>车</span><div><b>车仓通</b><small>安全提车签收</small></div></div>
     <div className="task-banner"><Truck/><div><p>提货任务</p><h1>{task.taskNo}</h1></div><span>待签收</span></div>
-    {task.vehicles.map(vehicle => <div className="task-car" key={vehicle.id}><div><small>本次提取车辆</small><h2>{vehicle.model || "未填写车型"}</h2><p>车架号 {maskVin(vehicle.vin)}</p></div><ShieldCheck/><p><Clock3/>二维码有效至 {showTime(task.expiresAt)}</p></div>)}
+    {task.vehicles.map(vehicle => <div className="task-car" key={vehicle.id}><div><small>本次提取车辆</small><h2>{vehicle.model || "未填写车型"}</h2><p>车架号 {maskVin(vehicle.vin)}</p></div><ShieldCheck/><p><CalendarDays/>二维码有效至 {showDate(task.expiresAt)}</p></div>)}
     <form onSubmit={submit}><h3>司机信息</h3><div className="driver-info-fields"><label><span><UserRound/>姓名</span><input name="driverName" maxLength={100} autoComplete="name" required placeholder="请输入姓名" /></label><label><span><Phone/>联系电话</span><input name="driverPhone" type="tel" inputMode="tel" maxLength={30} autoComplete="tel" required placeholder="请输入联系电话" /></label></div><h3>现场凭证</h3><div className="upload-grid">
       <label className="driver-photo-upload"><Camera/><b>{photoName || "拍摄或上传车辆照片"}</b><small>原图最大 5 MB，手机照片将自动优化</small><input name="photo" type="file" accept="image/*" capture="environment" required onChange={event => setPhotoName(event.target.files?.[0]?.name || "")}/></label>
     </div>

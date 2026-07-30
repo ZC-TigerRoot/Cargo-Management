@@ -1,25 +1,28 @@
 import * as XLSX from "xlsx";
 import { inventoryDays, type BusinessType, type VehicleRecord } from "./domain";
-import { CHINA_TIME_ZONE, localInputValue } from "./datetime";
+import { normalizeCalendarDate } from "./datetime";
 
 export const overseasExcelHeaders = [
   "提单号", "车架号", "车型", "HS#", "起运港", "目的港", "船名航次", "ETD", "ETA", "保税仓地点",
-  "入保税仓库时间", "入库金额", "入库BOE号", "入库仓库名称", "所属客人", "商社通知放车时间", "客户通知做过户文件时间",
-  "客户通知放车时间", "出库提货明细", "实际出保税库时间", "出库BOE号", "BOE抬头", "出库金额", "库存天数", "出库通知单交付给商社日期",
-  "客户交付签收单日期", "外代交付签收单给商社时间", "备注",
+  "入保税仓库日期", "入库金额", "入库BOE号", "入库仓库名称", "所属客人", "商社通知放车日期", "客户通知做过户文件日期",
+  "客户通知放车日期", "出库提货明细", "实际出库日期", "出库BOE号", "BOE抬头", "出库金额", "库存天数", "出库通知单交付给商社日期",
+  "客户交付签收单日期", "外代交付签收单给商社日期", "备注",
 ] as const;
 
 export const domesticExcelHeaders = [
-  "车架号", "车型", "品牌", "生产商", "PO#", "仓库地点", "入仓库时间", "入库金额", "入库BOE号", "入库仓库名称", "所属客人",
-  "商社通知放车时间", "出库提货明细", "实际出保税库时间", "出库BOE号", "BOE抬头", "出库金额", "库存天数", "出库通知单交付给商社",
-  "客户交付签收单日期", "外代交付签收单给商社时间", "备注",
+  "车架号", "车型", "品牌", "生产商", "PO#", "仓库地点", "入仓库日期", "入库金额", "入库BOE号", "入库仓库名称", "所属客人",
+  "商社通知放车日期", "出库提货明细", "实际出库日期", "出库BOE号", "BOE抬头", "出库金额", "库存天数", "出库通知单交付给商社日期",
+  "客户交付签收单日期", "外代交付签收单给商社日期", "备注",
 ] as const;
 
 type ExportRow = Record<string, string | number | undefined>;
 
 function excelDate(value: string | undefined) {
-  const local = localInputValue(value, CHINA_TIME_ZONE);
-  return local ? local.replace("T", " ") : "";
+  return value ? normalizeCalendarDate(value) : "";
+}
+
+function excelInventoryDays(inboundAt: string | undefined, outboundAt: string | undefined) {
+  return inventoryDays(excelDate(inboundAt) || undefined, excelDate(outboundAt) || undefined);
 }
 
 function overseasRow(vehicle: VehicleRecord): ExportRow {
@@ -34,23 +37,23 @@ function overseasRow(vehicle: VehicleRecord): ExportRow {
     ETD: excelDate(vehicle.etd),
     ETA: excelDate(vehicle.eta),
     保税仓地点: vehicle.warehouseLocation,
-    入保税仓库时间: excelDate(vehicle.inboundAt),
+    入保税仓库日期: excelDate(vehicle.inboundAt),
     入库金额: vehicle.inboundAmount,
     "入库BOE号": vehicle.inboundBoeNo,
     入库仓库名称: vehicle.warehouse,
     所属客人: vehicle.customer,
-    商社通知放车时间: excelDate(vehicle.merchantReleaseAt),
-    客户通知做过户文件时间: excelDate(vehicle.transferDocNoticeAt),
-    客户通知放车时间: excelDate(vehicle.customerReleaseAt),
+    商社通知放车日期: excelDate(vehicle.merchantReleaseAt),
+    客户通知做过户文件日期: excelDate(vehicle.transferDocNoticeAt),
+    客户通知放车日期: excelDate(vehicle.customerReleaseAt),
     出库提货明细: vehicle.pickupDetails,
-    实际出保税库时间: excelDate(vehicle.outboundAt),
+    实际出库日期: excelDate(vehicle.outboundAt),
     "出库BOE号": vehicle.outboundBoeNo,
     "BOE抬头": vehicle.outboundBoeTitle,
     出库金额: vehicle.outboundAmount,
-    库存天数: inventoryDays(vehicle.inboundAt, vehicle.outboundAt),
+    库存天数: excelInventoryDays(vehicle.inboundAt, vehicle.outboundAt),
     出库通知单交付给商社日期: excelDate(vehicle.outboundNoticeDeliveredAt),
     客户交付签收单日期: excelDate(vehicle.customerReceiptDeliveredAt),
-    外代交付签收单给商社时间: excelDate(vehicle.agentReceiptDeliveredAt),
+    外代交付签收单给商社日期: excelDate(vehicle.agentReceiptDeliveredAt),
     备注: vehicle.notes,
   };
 }
@@ -63,21 +66,21 @@ function domesticRow(vehicle: VehicleRecord): ExportRow {
     生产商: vehicle.manufacturer,
     "PO#": vehicle.referenceNo,
     仓库地点: vehicle.warehouseLocation,
-    入仓库时间: excelDate(vehicle.inboundAt),
+    入仓库日期: excelDate(vehicle.inboundAt),
     入库金额: vehicle.inboundAmount,
     "入库BOE号": vehicle.inboundBoeNo,
     入库仓库名称: vehicle.warehouse,
     所属客人: vehicle.customer,
-    商社通知放车时间: excelDate(vehicle.merchantReleaseAt),
+    商社通知放车日期: excelDate(vehicle.merchantReleaseAt),
     出库提货明细: vehicle.pickupDetails,
-    实际出保税库时间: excelDate(vehicle.outboundAt),
+    实际出库日期: excelDate(vehicle.outboundAt),
     "出库BOE号": vehicle.outboundBoeNo,
     "BOE抬头": vehicle.outboundBoeTitle,
     出库金额: vehicle.outboundAmount,
-    库存天数: inventoryDays(vehicle.inboundAt, vehicle.outboundAt),
-    出库通知单交付给商社: excelDate(vehicle.outboundNoticeDeliveredAt),
+    库存天数: excelInventoryDays(vehicle.inboundAt, vehicle.outboundAt),
+    出库通知单交付给商社日期: excelDate(vehicle.outboundNoticeDeliveredAt),
     客户交付签收单日期: excelDate(vehicle.customerReceiptDeliveredAt),
-    外代交付签收单给商社时间: excelDate(vehicle.agentReceiptDeliveredAt),
+    外代交付签收单给商社日期: excelDate(vehicle.agentReceiptDeliveredAt),
     备注: vehicle.notes,
   };
 }

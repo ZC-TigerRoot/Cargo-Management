@@ -33,14 +33,14 @@ describe("车辆持久化映射", () => {
       warehouseTimezone: "Asia/Shanghai",
       vin: "test-vin-001",
       model: "测试车型",
-      inboundAt: "2026-07-17T01:30:00.000Z",
+      inboundAt: "2026-07-17",
       inboundAmount: "1200.50",
     });
     const data = vehicleScalarData(payload);
 
     expect(data.vin).toBe("TEST-VIN-001");
     expect(data.model).toBe("测试车型");
-    expect(data.inboundAt?.toISOString()).toBe("2026-07-17T01:30:00.000Z");
+    expect(data.inboundAt).toEqual(new Date("2026-07-17T00:00:00.000Z"));
     expect(data.inboundAmount).toBe("1200.50");
   });
 

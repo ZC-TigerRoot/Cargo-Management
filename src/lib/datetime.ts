@@ -1,6 +1,25 @@
 export const CHINA_TIME_ZONE = "Asia/Shanghai";
 export const defaultWarehouseTimezone = () => CHINA_TIME_ZONE;
 
+const CALENDAR_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+function calendarParts(value: string) {
+  const match = CALENDAR_DATE.exec(value);
+  if (!match) throw new Error("日期格式必须为 YYYY-MM-DD");
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) {
+    throw new Error("日期无效");
+  }
+  return { year, month, day };
+}
+
+function padded(value: number) {
+  return String(value).padStart(2, "0");
+}
+
 export function isTimeZone(value: string) {
   try {
     new Intl.DateTimeFormat("en", { timeZone: value }).format();
@@ -24,6 +43,55 @@ function partsAt(date: Date, timeZone: string) {
   return Object.fromEntries(parts.map(part => [part.type, part.value]));
 }
 
+export function isCalendarDate(value: string) {
+  try {
+    calendarParts(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function chinaToday(now = new Date()) {
+  const parts = partsAt(now, CHINA_TIME_ZONE);
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+/** Prisma represents PostgreSQL DATE values as UTC-midnight Date objects. */
+export function toPrismaDate(value: string) {
+  const { year, month, day } = calendarParts(value);
+  return new Date(Date.UTC(year, month - 1, day));
+}
+
+export function fromPrismaDate(value: Date) {
+  if (Number.isNaN(value.getTime())) throw new Error("日期无效");
+  return `${value.getUTCFullYear()}-${padded(value.getUTCMonth() + 1)}-${padded(value.getUTCDate())}`;
+}
+
+export function normalizeCalendarDate(value: string) {
+  if (isCalendarDate(value)) return value;
+  const instant = new Date(value);
+  if (Number.isNaN(instant.getTime())) throw new Error("日期无效");
+  return chinaToday(instant);
+}
+
+export function addCalendarDays(value: string, days: number) {
+  const date = toPrismaDate(value);
+  date.setUTCDate(date.getUTCDate() + days);
+  return fromPrismaDate(date);
+}
+
+export function calendarDayDifference(start: string, end: string) {
+  return Math.round((toPrismaDate(end).getTime() - toPrismaDate(start).getTime()) / 86_400_000);
+}
+
+export function formatCalendarDate(value: string | undefined) {
+  if (!value) return "";
+  const normalized = normalizeCalendarDate(value);
+  const { year, month, day } = calendarParts(normalized);
+  return `${year}年${padded(month)}月${padded(day)}日`;
+}
+
 export function localInputValue(value: string | undefined, timeZone: string) {
   if (!value) return "";
   const parts = partsAt(new Date(value), timeZone);
@@ -45,8 +113,7 @@ export function zonedLocalToIso(value: string, timeZone: string) {
 
 export function businessDate(value: string | undefined, timeZone = CHINA_TIME_ZONE) {
   void timeZone;
-  const local = localInputValue(value, CHINA_TIME_ZONE);
-  return local ? `${local.replace("T", " ")}（中国标准时间）` : "";
+  return formatCalendarDate(value);
 }
 
 export function chinaDateTime(value: string | Date) {

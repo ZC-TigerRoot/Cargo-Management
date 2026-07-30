@@ -1,3 +1,5 @@
+import { calendarDayDifference, chinaToday } from "./datetime";
+
 export type Role = "warehouse" | "forwarder" | "customer" | "admin";
 export const roleLabels: Record<Role, string> = {
   warehouse: "仓管", forwarder: "货代", customer: "客户", admin: "管理员",
@@ -9,6 +11,7 @@ export type VehicleStatus = typeof vehicleStatuses[number];
 export type VehicleRecord = {
   id: string;
   version: number;
+  updateSequence: string;
   vin?: string;
   model?: string;
   brand?: string;
@@ -82,7 +85,7 @@ export type VehicleAuditRecord = {
   changes: VehicleAuditChange[];
 };
 
-export type VehicleFormValues = Omit<VehicleRecord, "id" | "version" | "status" | "updatedAt" | "history" | "auditTrail">;
+export type VehicleFormValues = Omit<VehicleRecord, "id" | "version" | "updateSequence" | "status" | "updatedAt" | "history" | "auditTrail">;
 
 export const transitions: Record<string, VehicleStatus> = {
   INBOUND: "在库", MERCHANT_RELEASE: "待放车", CUSTOMER_RELEASE: "待提货",
@@ -91,8 +94,8 @@ export const transitions: Record<string, VehicleStatus> = {
 
 export function inventoryDays(inboundAt?: string, outboundAt?: string, now = new Date()) {
   if (!inboundAt) return 0;
-  const end = outboundAt ? new Date(outboundAt) : now;
-  return Math.max(0, Math.ceil((end.getTime() - new Date(inboundAt).getTime()) / 86_400_000));
+  const end = outboundAt ?? chinaToday(now);
+  return Math.max(0, calendarDayDifference(inboundAt, end) + 1);
 }
 
 export type Permission = "view" | "create" | "correct" | "delete" | "export" | "coordinatePickups" | "manageUsers" | "manageSettings" | "managePublicUrl";

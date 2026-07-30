@@ -1,10 +1,11 @@
 import type { z } from "zod";
+import { toPrismaDate } from "./datetime";
 import type { vehiclePayload } from "./validators";
 
 type VehiclePayload = z.infer<typeof vehiclePayload>;
 
 function dateOrNull(value: string | undefined) {
-  return value ? new Date(value) : null;
+  return value ? toPrismaDate(value) : null;
 }
 
 /**

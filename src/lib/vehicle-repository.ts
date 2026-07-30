@@ -1,6 +1,6 @@
 import type { EventType, Prisma, VehicleStatus as PrismaVehicleStatus } from "@prisma/client";
 import type { VehicleAuditRecord, VehicleEventRecord, VehicleRecord } from "./domain";
-import { CHINA_TIME_ZONE } from "./datetime";
+import { CHINA_TIME_ZONE, chinaToday, fromPrismaDate, normalizeCalendarDate, toPrismaDate } from "./datetime";
 import { prisma } from "./prisma";
 import { vehicleScalarData } from "./vehicle-persistence";
 import { vehicleStatusCodes, vehicleStatusNames } from "./vehicle-status";
@@ -12,7 +12,7 @@ export const vehicleInclude = {
   customer: true,
   warehouse: true,
   events: {
-    orderBy: { createdAt: "asc" as const },
+    orderBy: { recordSequence: "asc" as const },
     include: {
       actor: { select: { name: true } },
       attachments: { select: { id: true, fileName: true, mimeType: true, size: true } },
@@ -56,8 +56,8 @@ export function businessBatchSnapshot(batch: {
     batch.portOfLoad ?? null,
     batch.portOfDischarge ?? null,
     batch.vesselVoyage ?? null,
-    batch.etd?.toISOString() ?? null,
-    batch.eta?.toISOString() ?? null,
+    batch.etd ? fromPrismaDate(batch.etd) : null,
+    batch.eta ? fromPrismaDate(batch.eta) : null,
     batch.manufacturer ?? null,
   ]);
 }
@@ -120,7 +120,7 @@ function effectiveEventAt(vehicle: VehicleWithRelations, field: keyof typeof eve
   const type = eventFieldMap[field];
   let value: string | undefined;
   for (const event of vehicle.events) {
-    if (event.type === type) value = event.occurredAt.toISOString();
+    if (event.type === type) value = fromPrismaDate(event.occurredAt);
     if (event.type === "CORRECTION") {
       const payload = eventPayload(event);
       if (payload.field === field && payload.eventType === type && payload.value === null) value = undefined;
@@ -140,11 +140,11 @@ function eventHistory(vehicle: VehicleWithRelations): VehicleEventRecord[] {
       id: event.id,
       type: event.type,
       title: cleared ? `撤销：${eventTitles[correctedType]}` : eventTitles[event.type],
-      occurredAt: event.occurredAt.toISOString(),
-      recordedAt: event.createdAt.toISOString(),
+      occurredAt: fromPrismaDate(event.occurredAt),
+      recordedAt: fromPrismaDate(event.createdAt),
       actor: event.actor?.name ?? (typeof payload.actorLabel === "string" ? payload.actorLabel : undefined),
       correctionOfId: event.correctionOfId ?? undefined,
-      reason: typeof payload.reason === "string" ? payload.reason : cleared ? "清空错误的业务时间" : undefined,
+      reason: typeof payload.reason === "string" ? payload.reason : cleared ? "清空错误的业务日期" : undefined,
       details: [
         typeof payload.driverLabel === "string" ? { label: "司机名称", value: payload.driverLabel } : undefined,
         typeof payload.driverName === "string" ? { label: "姓名", value: payload.driverName } : undefined,
@@ -163,6 +163,7 @@ export function toVehicleRecord(vehicle: VehicleWithRelations): VehicleRecord {
   return {
     id: vehicle.id,
     version: vehicle.version,
+    updateSequence: vehicle.updateSequence.toString(),
     vin: vehicle.vin ?? undefined,
     model: vehicle.model ?? undefined,
     brand: vehicle.brand ?? undefined,
@@ -172,29 +173,29 @@ export function toVehicleRecord(vehicle: VehicleWithRelations): VehicleRecord {
     portOfLoad: vehicle.batch?.portOfLoad ?? extraText(vehicle.extra, "portOfLoad"),
     portOfDischarge: vehicle.batch?.portOfDischarge ?? extraText(vehicle.extra, "portOfDischarge"),
     vesselVoyage: vehicle.batch?.vesselVoyage ?? extraText(vehicle.extra, "vesselVoyage"),
-    etd: vehicle.batch?.etd?.toISOString() ?? extraText(vehicle.extra, "etd"),
-    eta: vehicle.batch?.eta?.toISOString() ?? extraText(vehicle.extra, "eta"),
+    etd: vehicle.batch?.etd ? fromPrismaDate(vehicle.batch.etd) : extraText(vehicle.extra, "etd"),
+    eta: vehicle.batch?.eta ? fromPrismaDate(vehicle.batch.eta) : extraText(vehicle.extra, "eta"),
     manufacturer: vehicle.batch?.manufacturer ?? extraText(vehicle.extra, "manufacturer"),
     warehouseLocation: vehicle.warehouse?.location ?? extraText(vehicle.extra, "warehouseLocation"),
     warehouse: vehicle.warehouse?.name ?? extraText(vehicle.extra, "warehouse"),
     warehouseTimezone: CHINA_TIME_ZONE,
     customer: vehicle.customer?.name ?? undefined,
     status: vehicleStatusNames[vehicle.status],
-    inboundAt: vehicle.inboundAt?.toISOString(),
+    inboundAt: vehicle.inboundAt ? fromPrismaDate(vehicle.inboundAt) : undefined,
     inboundAmount: vehicle.inboundAmount?.toFixed(2),
     inboundBoeNo: vehicle.inboundBoeNo ?? undefined,
     merchantReleaseAt: effectiveEventAt(vehicle, "merchantReleaseAt"),
     transferDocNoticeAt: effectiveEventAt(vehicle, "transferDocNoticeAt"),
     customerReleaseAt: effectiveEventAt(vehicle, "customerReleaseAt"),
     pickupDetails: vehicle.pickupDetails ?? undefined,
-    outboundAt: vehicle.outboundAt?.toISOString(),
+    outboundAt: vehicle.outboundAt ? fromPrismaDate(vehicle.outboundAt) : undefined,
     outboundBoeNo: vehicle.outboundBoeNo ?? undefined,
     outboundBoeTitle: vehicle.outboundBoeTitle ?? undefined,
     outboundAmount: vehicle.outboundAmount?.toFixed(2),
     outboundNoticeDeliveredAt: effectiveEventAt(vehicle, "outboundNoticeDeliveredAt"),
     customerReceiptDeliveredAt: effectiveEventAt(vehicle, "customerReceiptDeliveredAt"),
     agentReceiptDeliveredAt: effectiveEventAt(vehicle, "agentReceiptDeliveredAt"),
-    updatedAt: vehicle.updatedAt.toISOString(),
+    updatedAt: fromPrismaDate(vehicle.updatedAt),
     notes: vehicle.notes ?? undefined,
     history: eventHistory(vehicle),
   };
@@ -290,16 +291,16 @@ async function upsertRelations(
       portOfLoad: data.portOfLoad,
       portOfDischarge: data.portOfDischarge,
       vesselVoyage: data.vesselVoyage,
-      etd: data.etd ? new Date(data.etd) : undefined,
-      eta: data.eta ? new Date(data.eta) : undefined,
+      etd: data.etd ? toPrismaDate(data.etd) : undefined,
+      eta: data.eta ? toPrismaDate(data.eta) : undefined,
       manufacturer: data.manufacturer,
     },
     update: {
       portOfLoad: data.portOfLoad ?? missingBatchValue,
       portOfDischarge: data.portOfDischarge ?? missingBatchValue,
       vesselVoyage: data.vesselVoyage ?? missingBatchValue,
-      etd: data.etd ? new Date(data.etd) : missingBatchValue,
-      eta: data.eta ? new Date(data.eta) : missingBatchValue,
+      etd: data.etd ? toPrismaDate(data.etd) : missingBatchValue,
+      eta: data.eta ? toPrismaDate(data.eta) : missingBatchValue,
       manufacturer: data.manufacturer ?? missingBatchValue,
     },
   }) : null;
@@ -311,8 +312,8 @@ async function upsertRelations(
     portOfLoad: value.portOfLoad,
     portOfDischarge: value.portOfDischarge,
     vesselVoyage: value.vesselVoyage,
-    etd: value.etd?.toISOString() ?? null,
-    eta: value.eta?.toISOString() ?? null,
+    etd: value.etd ? fromPrismaDate(value.etd) : null,
+    eta: value.eta ? fromPrismaDate(value.eta) : null,
     manufacturer: value.manufacturer,
   });
   const customerSnapshot = (value: NonNullable<typeof customer>) => ({ name: value.name });
@@ -358,11 +359,12 @@ function vehicleExtra(data: VehiclePayload, previous?: Prisma.JsonValue): Prisma
 
 function datedEvents(data: VehiclePayload, actorId?: string) {
   return (Object.entries(eventFieldMap) as [keyof typeof eventFieldMap, EventType][])
-    .flatMap(([field, type]) => data[field] ? [{ type, occurredAt: new Date(data[field]!), actorId }] : []);
+    .flatMap(([field, type]) => data[field] ? [{ type, occurredAt: toPrismaDate(data[field]!), actorId }] : []);
 }
 
 function auditSnapshot(record: VehicleRecord): Prisma.InputJsonValue {
-  const snapshot = { ...record };
+  const snapshot: Partial<VehicleRecord> = { ...record };
+  delete snapshot.updateSequence;
   delete snapshot.history;
   delete snapshot.auditTrail;
   return JSON.parse(JSON.stringify(snapshot)) as Prisma.InputJsonValue;
@@ -374,6 +376,7 @@ export async function createVehicle(
   context: MutationContext = {},
   expectedDestinationBatchSnapshot?: string | null,
 ) {
+  const operationDate = toPrismaDate(chinaToday());
   return serializableTransaction(async tx => {
     const previous = await tx.inventoryEvent.findUnique({
       where: { idempotencyKey },
@@ -393,7 +396,7 @@ export async function createVehicle(
       },
     });
     await tx.inventoryEvent.create({
-      data: { vehicleId: vehicle.id, type: "CREATED", occurredAt: new Date(), idempotencyKey, actorId: context.actorId },
+      data: { vehicleId: vehicle.id, type: "CREATED", occurredAt: operationDate, idempotencyKey, actorId: context.actorId },
     });
     const events = datedEvents(data, context.actorId);
     if (events.length) await tx.inventoryEvent.createMany({ data: events.map(event => ({ ...event, vehicleId: vehicle.id })) });
@@ -413,13 +416,19 @@ function mergeImportPayload(before: VehicleRecord, data: VehiclePayload) {
 function sameDate(left?: string, right?: string) {
   if (!left && !right) return true;
   if (!left || !right) return false;
-  return new Date(left).getTime() === new Date(right).getTime();
+  return normalizeCalendarDate(left) === normalizeCalendarDate(right);
 }
 
-async function appendDateCorrections(tx: Prisma.TransactionClient, existing: VehicleWithRelations, data: VehicleUpdatePayload, context: MutationContext) {
+async function appendDateCorrections(
+  tx: Prisma.TransactionClient,
+  existing: VehicleWithRelations,
+  data: VehicleUpdatePayload,
+  context: MutationContext,
+  operationDate: Date,
+) {
   for (const [field, type] of Object.entries(eventFieldMap) as [keyof typeof eventFieldMap, EventType][]) {
-    const previous = field === "inboundAt" ? existing.inboundAt?.toISOString()
-      : field === "outboundAt" ? existing.outboundAt?.toISOString()
+    const previous = field === "inboundAt" ? existing.inboundAt ? fromPrismaDate(existing.inboundAt) : undefined
+      : field === "outboundAt" ? existing.outboundAt ? fromPrismaDate(existing.outboundAt) : undefined
         : effectiveEventAt(existing, field);
     const next = data[field];
     if (sameDate(previous, next)) continue;
@@ -429,7 +438,7 @@ async function appendDateCorrections(tx: Prisma.TransactionClient, existing: Veh
         data: {
           vehicleId: existing.id,
           type,
-          occurredAt: new Date(next),
+          occurredAt: toPrismaDate(next),
           correctionOfId: corrected?.id,
           actorId: context.actorId,
           payload: { source: "record-edit", field, previousValue: previous ?? null },
@@ -440,7 +449,7 @@ async function appendDateCorrections(tx: Prisma.TransactionClient, existing: Veh
         data: {
           vehicleId: existing.id,
           type: "CORRECTION",
-          occurredAt: new Date(),
+          occurredAt: operationDate,
           correctionOfId: corrected?.id,
           actorId: context.actorId,
           payload: { source: "record-edit", field, eventType: type, value: null, previousValue: previous },
@@ -458,6 +467,7 @@ async function persistVehicleUpdate(
   preserveMissing: boolean,
   expectedDestinationBatchSnapshot?: string | null,
 ) {
+  const operationDate = toPrismaDate(chinaToday());
   return serializableTransaction(async tx => {
     const existing = await tx.vehicle.findUniqueOrThrow({ where: { id }, include: vehicleInclude });
     if (existing.version !== expectedVersion) throw new VersionConflictError();
@@ -488,21 +498,21 @@ async function persistVehicleUpdate(
     });
     if (result.count !== 1) throw new VersionConflictError();
 
-    await appendDateCorrections(tx, existing, data, context);
+    await appendDateCorrections(tx, existing, data, context, operationDate);
     if (existing.status !== nextStatus) {
       const manual = Boolean(data.status);
       await tx.inventoryEvent.create({
         data: {
           vehicleId: id,
           type: nextStatus === "EXCEPTION" ? "EXCEPTION" : "CORRECTION",
-          occurredAt: new Date(),
+          occurredAt: operationDate,
           actorId: context.actorId,
           payload: {
             source: manual ? "status-edit" : "auto-infer",
             field: "status",
             from: vehicleStatusNames[existing.status],
             to: vehicleStatusNames[nextStatus],
-            reason: manual ? data.statusReason! : "根据业务时间自动更新",
+            reason: manual ? data.statusReason! : "根据业务日期自动更新",
           },
         },
       });
@@ -622,7 +632,7 @@ export async function listVehicles({ id, q, scope }: { id?: string; q?: string; 
       } : {}),
     },
     include: vehicleInclude,
-    orderBy: { updatedAt: "desc" },
+    orderBy: { updateSequence: "desc" },
   });
 }
 
@@ -643,20 +653,20 @@ const auditFieldLabels: Record<string, string> = {
   warehouse: "仓库",
   customer: "所属客户",
   status: "车辆状态",
-  inboundAt: "入库时间",
+  inboundAt: "入库日期",
   inboundAmount: "入库金额",
   inboundBoeNo: "入库 BOE 号",
-  merchantReleaseAt: "商社通知放车时间",
-  transferDocNoticeAt: "客户通知做过户文件时间",
-  customerReleaseAt: "客户通知放车时间",
+  merchantReleaseAt: "商社通知放车日期",
+  transferDocNoticeAt: "客户通知做过户文件日期",
+  customerReleaseAt: "客户通知放车日期",
   pickupDetails: "出库提货明细",
-  outboundAt: "实际出库时间",
+  outboundAt: "实际出库日期",
   outboundBoeNo: "出库 BOE 号",
   outboundBoeTitle: "BOE 抬头",
   outboundAmount: "出库金额",
-  outboundNoticeDeliveredAt: "出库通知单交付时间",
-  customerReceiptDeliveredAt: "客户签收单交付时间",
-  agentReceiptDeliveredAt: "外代签收单交付时间",
+  outboundNoticeDeliveredAt: "出库通知单交付日期",
+  customerReceiptDeliveredAt: "客户签收单交付日期",
+  agentReceiptDeliveredAt: "外代签收单交付日期",
   notes: "备注",
 };
 
@@ -670,7 +680,7 @@ export async function listVehicleAuditTrail(vehicleId: string): Promise<VehicleA
   const audits = await prisma.auditLog.findMany({
     where: { entityType: "Vehicle", entityId: vehicleId },
     include: { actor: { select: { name: true } } },
-    orderBy: { createdAt: "asc" },
+    orderBy: { recordSequence: "asc" },
   });
   return audits.map(audit => {
     const before = jsonObject(audit.before ?? undefined);
@@ -692,7 +702,7 @@ export async function listVehicleAuditTrail(vehicleId: string): Promise<VehicleA
           : audit.action === "PICKUP_SIGNED" ? "司机签收并更新状态"
             : "修改车辆数据",
       actor: audit.actor?.name ?? audit.actorLabel ?? "系统",
-      changedAt: audit.createdAt.toISOString(),
+      changedAt: fromPrismaDate(audit.createdAt),
       changes,
     };
   });

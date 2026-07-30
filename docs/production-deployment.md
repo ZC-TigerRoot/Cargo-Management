@@ -241,6 +241,8 @@ proxy_set_header X-Real-IP $remote_addr;
 8. 检查本地页面、公网页面、登录 API 和近期日志；
 9. 若运行检查失败，恢复上一个应用版本。
 
+包含不兼容数据结构迁移（例如时间戳改为日历日期）的版本必须进入维护窗口：先停止 Cargo 应用，再执行 `pnpm db:deploy`，最后切换并启动新版本。不得让旧版本应用在新结构上继续接收请求。
+
 部署完成后应记录新旧 commit、数据库迁移结果、进程重启方式和健康检查结果。
 
 ### 3.2 手动更新流程
@@ -278,14 +280,9 @@ pnpm exec tsc --noEmit
 pnpm build
 ```
 
-#### 第三步：组装发布包并执行迁移
+#### 第三步：组装发布包
 
-按“2.6 组装 standalone 运行包”创建并验证 release。所有构建检查通过后，且在停止服务之前执行：
-
-```bash
-cd "$STAGE_DIR/source"
-pnpm db:deploy
-```
+按“2.6 组装 standalone 运行包”创建并验证 release。此时不要修改数据库或停止服务。
 
 日常更新严禁执行：
 
@@ -293,9 +290,7 @@ pnpm db:deploy
 pnpm db:seed
 ```
 
-如果迁移失败，停止更新并保持当前运行程序不变。不要自动回滚数据库迁移。
-
-#### 第四步：备份并切换应用
+#### 第四步：备份、停止服务、迁移并切换应用
 
 先记录宝塔/PM2 中 Cargo 项目的准确停止和启动方式。以下变量仅表示流程，实际服务控制命令必须以服务器当前配置为准：
 
@@ -308,12 +303,17 @@ cp -a "$APP_DIR" "$BACKUP_DIR"
 # 通过宝塔/PM2 只停止 cargo-management 项目
 # <Cargo 项目停止命令>
 
+cd "$STAGE_DIR/source"
+pnpm db:deploy
+
 rsync -a --delete "$RELEASE_DIR/" "$APP_DIR/"
 chown -R www:www "$APP_DIR"
 
 # 通过原有管理方式启动 cargo-management 项目
 # <Cargo 项目启动命令>
 ```
+
+如果迁移失败，停止更新并立即通过原有管理方式重新启动旧应用。不要切换发布目录，也不要自动回滚数据库迁移。
 
 不要使用 `pkill node`、`killall node` 等会影响其他项目的宽泛命令。
 

@@ -20,20 +20,21 @@ function record(overrides: Partial<VehicleRecord> = {}): VehicleRecord {
     warehouseTimezone: "Asia/Shanghai",
     customer: "甲客户",
     status: "在库",
-    inboundAt: "2026-01-01T00:00:00.000Z",
-    updatedAt: "2026-01-01T00:00:00.000Z",
+    inboundAt: "2026-01-01",
+    updatedAt: "2026-01-01",
     ...overrides,
+    updateSequence: overrides.updateSequence ?? "1",
   };
 }
 
 const records = [
   record({ id: "unreleased" }),
-  record({ id: "released", merchantReleaseAt: "2026-01-03T00:00:00.000Z" }),
-  record({ id: "pickup", merchantReleaseAt: "2026-01-03T00:00:00.000Z", customerReleaseAt: "2026-01-04T00:00:00.000Z" }),
-  record({ id: "notice", customer: "乙客户", merchantReleaseAt: "2026-01-03T00:00:00.000Z", outboundNoticeDeliveredAt: "2026-01-05T00:00:00.000Z" }),
-  record({ id: "inconsistent", customer: undefined, warehouse: undefined, merchantReleaseAt: undefined, customerReleaseAt: "2026-01-04T00:00:00.000Z", outboundNoticeDeliveredAt: "2026-01-05T00:00:00.000Z" }),
-  record({ id: "signed", history: [{ id: "signed-event", type: "DRIVER_SIGNED", title: "司机完成签收", occurredAt: "2026-01-06T00:00:00.000Z", recordedAt: "2026-01-06T00:00:00.000Z" }], status: "已完成" }),
-  record({ id: "outbound", outboundAt: "2026-01-06T00:00:00.000Z", status: "待签收" }),
+  record({ id: "released", merchantReleaseAt: "2026-01-03" }),
+  record({ id: "pickup", merchantReleaseAt: "2026-01-03", customerReleaseAt: "2026-01-04" }),
+  record({ id: "notice", customer: "乙客户", merchantReleaseAt: "2026-01-03", outboundNoticeDeliveredAt: "2026-01-05" }),
+  record({ id: "inconsistent", customer: undefined, warehouse: undefined, merchantReleaseAt: undefined, customerReleaseAt: "2026-01-04", outboundNoticeDeliveredAt: "2026-01-05" }),
+  record({ id: "signed", history: [{ id: "signed-event", type: "DRIVER_SIGNED", title: "司机完成签收", occurredAt: "2026-01-06", recordedAt: "2026-01-06" }], status: "已完成" }),
+  record({ id: "outbound", outboundAt: "2026-01-06", status: "待签收" }),
   record({ id: "unreleased" }),
 ];
 
@@ -41,10 +42,10 @@ describe("车辆库存透视统计", () => {
   it("按入库、实际出库和司机签收事实判断当前在库", () => {
     expect(isPhysicalInventory(record({ status: "异常" }))).toBe(true);
     expect(isMerchantUnreleased(record())).toBe(true);
-    expect(isMerchantUnreleased(record({ merchantReleaseAt: "2026-01-02T00:00:00.000Z" }))).toBe(false);
+    expect(isMerchantUnreleased(record({ merchantReleaseAt: "2026-01-02" }))).toBe(false);
     expect(isPhysicalInventory(record({ inboundAt: undefined }))).toBe(false);
-    expect(isPhysicalInventory(record({ outboundAt: "2026-01-02T00:00:00.000Z" }))).toBe(false);
-    expect(isPhysicalInventory(record({ history: [{ id: "signed", type: "DRIVER_SIGNED", title: "司机完成签收", occurredAt: "2026-01-02T00:00:00.000Z", recordedAt: "2026-01-02T00:00:00.000Z" }] }))).toBe(false);
+    expect(isPhysicalInventory(record({ outboundAt: "2026-01-02" }))).toBe(false);
+    expect(isPhysicalInventory(record({ history: [{ id: "signed", type: "DRIVER_SIGNED", title: "司机完成签收", occurredAt: "2026-01-02", recordedAt: "2026-01-02" }] }))).toBe(false);
   });
 
   it("汇总商社放车、提货、账龄及数据质量指标且按车辆 ID 去重", () => {
@@ -62,7 +63,7 @@ describe("车辆库存透视统计", () => {
       inconsistentReleaseSequenceCount: 1,
       signedWithoutOutboundCount: 1,
     });
-    expect(summary.averageInventoryDays).toBe(40);
+    expect(summary.averageInventoryDays).toBe(41);
   });
 
   it("默认可生成客户乘放车进度的交叉表及行列总计", () => {
@@ -98,12 +99,13 @@ describe("车辆库存透视统计", () => {
   it("库存账龄在 7、15 和 30 天边界正确分档", () => {
     const now = new Date("2026-02-01T00:00:00.000Z");
     const cases = [
-      ["2026-01-25T00:00:00.000Z", "0–7 天"],
-      ["2026-01-24T00:00:00.000Z", "8–15 天"],
-      ["2026-01-17T00:00:00.000Z", "8–15 天"],
-      ["2026-01-16T00:00:00.000Z", "16–30 天"],
-      ["2026-01-02T00:00:00.000Z", "16–30 天"],
-      ["2026-01-01T00:00:00.000Z", "31 天以上"],
+      ["2026-02-01", "0–7 天"],
+      ["2026-01-26", "0–7 天"],
+      ["2026-01-25", "8–15 天"],
+      ["2026-01-18", "8–15 天"],
+      ["2026-01-17", "16–30 天"],
+      ["2026-01-03", "16–30 天"],
+      ["2026-01-02", "31 天以上"],
     ] as const;
 
     for (const [inboundAt, expected] of cases) {
