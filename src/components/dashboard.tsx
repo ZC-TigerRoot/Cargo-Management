@@ -11,6 +11,7 @@ import SideNav from "@/components/side-nav";
 import VehicleFormModal from "@/components/vehicle-form-modal";
 import VehicleFilterBar from "@/components/vehicle-filter-bar";
 import VehicleTable from "@/components/vehicle-table";
+import { ChangelogButton } from "@/components/changelog-modal";
 import { createVehicleFilters, filterVehicleRecords, vehicleExportUrl, type VehicleFilters } from "@/lib/vehicle-filters";
 
 export default function Dashboard() {
@@ -55,7 +56,7 @@ export default function Dashboard() {
 
   return <div className="app-shell">
     <SideNav open={mobile} onClose={() => setMobile(false)} roleLabel={roleLabels[role]} userName={user?.name} role={role}/>
-    <main className="main"><header className="topbar"><button className="menu" onClick={() => setMobile(true)} aria-label="打开菜单"><Menu/></button><div><p>{todayLabel}</p><h1>{greeting}，{user?.name || "用户"}</h1></div><div className="top-actions">{can(role, "export") && <a href={exportHref} className="secondary-button"><Download/>导出筛选结果（{filtered.length}）</a>}{can(role, "create") && <button className="primary-button" onClick={() => setModal(true)}><Plus/>录入车辆</button>}<button className="secondary-button" onClick={logout} aria-label="退出登录"><LogOut/></button></div></header>
+    <main className="main"><header className="topbar"><button className="menu" onClick={() => setMobile(true)} aria-label="打开菜单"><Menu/></button><div><p>{todayLabel}</p><h1>{greeting}，{user?.name || "用户"}</h1></div><div className="top-actions">{can(role, "export") && <a href={exportHref} className="secondary-button"><Download/>导出筛选结果（{filtered.length}）</a>}<ChangelogButton/>{can(role, "create") && <button className="primary-button" onClick={() => setModal(true)}><Plus/>录入车辆</button>}<button className="secondary-button" onClick={logout} aria-label="退出登录"><LogOut/></button></div></header>
       <section className="content"><div className="section-heading"><div><p className="eyebrow">实时运营</p><h2>库存一览</h2></div><div className={loadError ? "live demo" : "live"}><i/> {loading ? "数据同步中" : loadError || "数据已同步"}</div></div>
         <div className="kpi-grid">{kpis.map(item => <article className={item.alert ? "kpi alert" : "kpi"} key={item.label}><div><span>{item.label}</span><strong>{item.value}<small> 辆</small></strong><p>{item.delta}</p></div><item.icon/></article>)}</div>
         <div className="chart-grid"><article className="panel age-panel"><div className="panel-title"><div><p className="eyebrow">库存结构</p><h3>库存账龄</h3></div><span>共 {inStorage.length} 辆在途/在库</span></div><div className="age-bars">{ageBuckets.map(bucket => <div key={bucket.n}><span>{bucket.n}</span><div><i className={bucket.c} style={{ width: `${bucket.count / maxAgeCount * 100}%` }}/></div><b>{bucket.count}</b></div>)}</div></article>

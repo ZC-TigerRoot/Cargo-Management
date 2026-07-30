@@ -9,6 +9,7 @@ import VehicleFilterBar from "./vehicle-filter-bar";
 import VehicleFormModal from "./vehicle-form-modal";
 import VehiclePivotReport from "./vehicle-pivot-report";
 import VehicleTable from "./vehicle-table";
+import { ChangelogButton } from "./changelog-modal";
 import { can, roleLabels, type BusinessType, type VehicleRecord } from "@/lib/domain";
 import { useVehicleRecords } from "@/lib/use-vehicle-records";
 import { useSession } from "@/lib/use-session";
@@ -50,6 +51,7 @@ export default function ModulePage({ kind }: { kind: Kind }) {
         <div><p>{m.eyebrow}</p><h1>{m.title}</h1></div>
         <div className="top-actions">
           {["vehicles", "overseas", "domestic", "reports"].includes(kind) && can(role, "export") && <a href={exportHref} className="secondary-button"><Download />导出筛选结果（{rows.length}）</a>}
+          <ChangelogButton />
           {recordModule && can(role, "create") && <button className="primary-button" onClick={() => setModal(true)}><Plus />新增记录</button>}
         </div>
       </header>

@@ -14,6 +14,7 @@ import {
   X,
 } from "lucide-react";
 import SideNav from "@/components/side-nav";
+import { ChangelogButton } from "@/components/changelog-modal";
 import { formatCalendarDate } from "@/lib/datetime";
 import { roleLabels, type Role } from "@/lib/domain";
 import { useSession } from "@/lib/use-session";
@@ -174,6 +175,7 @@ export default function UserManagement() {
         <button className="menu" onClick={() => setMobile(true)} aria-label="打开菜单"><Menu /></button>
         <div><p>系统管理</p><h1>用户管理</h1></div>
         <div className="top-actions">
+          <ChangelogButton />
           <button className="primary-button" onClick={() => setDialogUser("create")}><Plus />新建用户</button>
         </div>
       </header>

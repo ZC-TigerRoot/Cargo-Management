@@ -301,7 +301,76 @@
   .user-list-toolbar .result-count { margin-left: 0; }
 }
 
+.changelog-dialog {
+  width: min(560px, 100%);
+  max-height: calc(100vh - 40px);
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+.changelog-dialog .modal-title { flex: none; }
+.changelog-current {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 18px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: #edf5f1;
+  color: var(--green);
+}
+.changelog-current span { font-size: 11px; font-weight: 700; }
+.changelog-current strong { font-size: 18px; letter-spacing: 0.3px; }
+.changelog-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.changelog-entry {
+  padding: 14px 15px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: #fbfcfb;
+}
+.changelog-entry-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.changelog-entry-head b { font-size: 13px; color: var(--green); }
+.changelog-entry-head time { font-size: 10px; color: var(--muted); white-space: nowrap; }
+.changelog-entry-title {
+  margin: 6px 0 10px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.changelog-entry ul {
+  margin: 0;
+  padding: 0 0 0 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.changelog-entry li {
+  font-size: 11px;
+  line-height: 1.55;
+  color: #55635c;
+}
 @media (max-width: 760px) {
+  .top-actions .changelog-button {
+    display: inline-flex;
+    font-size: 0;
+    width: 42px;
+    padding: 0;
+    justify-content: center;
+  }
+  .top-actions .changelog-button svg { width: 18px; height: 18px; }
   .user-page-heading { align-items: flex-start; }
   .admin-only-badge { font-size: 0; padding: 8px; }
   .admin-only-badge svg { width: 17px; height: 17px; }
