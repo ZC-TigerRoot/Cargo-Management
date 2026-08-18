@@ -14,19 +14,19 @@ export type InventoryAgeFilter = keyof typeof inventoryAgeLabels;
 
 export type VehicleFilters = {
   q: string;
-  type: BusinessType | "";
-  status: VehicleStatus | "";
-  warehouse: string;
+  type: BusinessType[];
+  status: VehicleStatus[];
+  warehouse: string[];
   warehouseLocation: string;
-  customer: string;
-  model: string;
-  brand: string;
+  customer: string[];
+  model: string[];
+  brand: string[];
   referenceNo: string;
   vin: string;
   inboundBoeNo: string;
   outboundBoeNo: string;
   outboundBoeTitle: string;
-  inventoryAge: InventoryAgeFilter | "";
+  inventoryAge: InventoryAgeFilter[];
   inboundFrom: string;
   inboundTo: string;
   outboundFrom: string;
@@ -41,6 +41,8 @@ export type VehicleFilters = {
 
 export type VehicleFilterKey = keyof VehicleFilters;
 export type VehicleFacetKey = "type" | "status" | "warehouse" | "customer" | "model" | "brand" | "inventoryAge";
+export const multiVehicleFacetKeys = ["type", "status", "warehouse", "customer", "model", "brand", "inventoryAge"] as const;
+export type MultiVehicleFacetKey = typeof multiVehicleFacetKeys[number];
 
 const filterKeys: VehicleFilterKey[] = [
   "q", "type", "status", "warehouse", "warehouseLocation", "customer", "model", "brand", "referenceNo", "vin",
@@ -48,18 +50,22 @@ const filterKeys: VehicleFilterKey[] = [
   "outboundTo", "updatedFrom", "updatedTo", "inboundAmountMin", "inboundAmountMax", "outboundAmountMin", "outboundAmountMax",
 ];
 
+function isMultiVehicleFacetKey(key: VehicleFilterKey): key is MultiVehicleFacetKey {
+  return (multiVehicleFacetKeys as readonly string[]).includes(key);
+}
+
 export function createVehicleFilters(): VehicleFilters {
-  return Object.fromEntries(filterKeys.map(key => [key, ""])) as VehicleFilters;
+  return Object.fromEntries(filterKeys.map(key => [key, isMultiVehicleFacetKey(key) ? [] : ""])) as unknown as VehicleFilters;
 }
 
 function normalized(value: string | undefined) {
   return (value ?? "").trim().toLocaleLowerCase("zh-CN");
 }
 
-function matchesChoice(value: string | undefined, filter: string) {
-  if (!filter) return true;
-  if (filter === EMPTY_FACET_VALUE) return !value;
-  return normalized(value) === normalized(filter);
+function matchesChoice(value: string | undefined, filter: string | readonly string[]) {
+  const choices = (Array.isArray(filter) ? filter : [filter]).filter(Boolean);
+  if (!choices.length) return true;
+  return choices.some(choice => choice === EMPTY_FACET_VALUE ? !value : normalized(value) === normalized(choice));
 }
 
 function matchesText(value: string | undefined, filter: string) {
@@ -89,13 +95,13 @@ function matchesNumberRange(value: string | undefined, minimum: string, maximum:
 }
 
 function matchesInventoryAge(vehicle: VehicleRecord, filter: VehicleFilters["inventoryAge"], now: Date) {
-  if (!filter) return true;
+  if (!filter.length) return true;
   if (!vehicle.inboundAt) return false;
   const days = inventoryDays(vehicle.inboundAt, vehicle.outboundAt, now);
-  if (filter === "0-7") return days <= 7;
-  if (filter === "8-15") return days >= 8 && days <= 15;
-  if (filter === "16-30") return days >= 16 && days <= 30;
-  return days >= 31;
+  return filter.some(value => value === "0-7" && days <= 7 ||
+    value === "8-15" && days >= 8 && days <= 15 ||
+    value === "16-30" && days >= 16 && days <= 30 ||
+    value === "31+" && days >= 31);
 }
 
 const keywordFields: (keyof VehicleRecord)[] = [
@@ -144,7 +150,7 @@ export function filterVehicleRecords(records: readonly VehicleRecord[], filters:
 }
 
 export function activeVehicleFilterCount(filters: VehicleFilters) {
-  return filterKeys.filter(key => filters[key] !== "").length;
+  return filterKeys.filter(key => isMultiVehicleFacetKey(key) ? filters[key].length > 0 : filters[key] !== "").length;
 }
 
 function dateParam(value: string | null) {
@@ -155,12 +161,16 @@ function amountParam(value: string | null) {
   return value && /^-?\d+(?:\.\d+)?$/.test(value) ? value.slice(0, 30) : "";
 }
 
-export function vehicleFiltersFromSearchParams(params: Pick<URLSearchParams, "get">): VehicleFilters {
+export function vehicleFiltersFromSearchParams(params: Pick<URLSearchParams, "get" | "getAll">): VehicleFilters {
   const result = createVehicleFilters();
-  for (const key of filterKeys) result[key] = (params.get(key) ?? "").trim().slice(0, 100) as never;
-  if (result.type !== "overseas" && result.type !== "domestic") result.type = "";
-  if (!vehicleStatuses.includes(result.status as VehicleStatus)) result.status = "";
-  if (!(result.inventoryAge in inventoryAgeLabels)) result.inventoryAge = "";
+  for (const key of filterKeys) {
+    result[key] = (isMultiVehicleFacetKey(key)
+      ? [...new Set(params.getAll(key).map(value => value.trim().slice(0, 100)).filter(Boolean))]
+      : (params.get(key) ?? "").trim().slice(0, 100)) as never;
+  }
+  result.type = result.type.filter(value => value === "overseas" || value === "domestic");
+  result.status = result.status.filter(value => vehicleStatuses.includes(value as VehicleStatus)) as VehicleStatus[];
+  result.inventoryAge = result.inventoryAge.filter(value => value in inventoryAgeLabels) as InventoryAgeFilter[];
   for (const key of ["inboundFrom", "inboundTo", "outboundFrom", "outboundTo", "updatedFrom", "updatedTo"] as const) result[key] = dateParam(params.get(key));
   for (const key of ["inboundAmountMin", "inboundAmountMax", "outboundAmountMin", "outboundAmountMax"] as const) result[key] = amountParam(params.get(key));
   return result;
@@ -168,7 +178,11 @@ export function vehicleFiltersFromSearchParams(params: Pick<URLSearchParams, "ge
 
 export function vehicleExportUrl(filters: VehicleFilters) {
   const params = new URLSearchParams();
-  for (const key of filterKeys) if (filters[key]) params.set(key, filters[key]);
+  for (const key of filterKeys) {
+    const value = filters[key];
+    if (Array.isArray(value)) value.forEach(item => params.append(key, item));
+    else if (value) params.set(key, value);
+  }
   const query = params.toString();
   return query ? `/api/v1/export?${query}` : "/api/v1/export";
 }

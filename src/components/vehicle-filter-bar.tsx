@@ -1,6 +1,7 @@
 "use client";
 
 import { RotateCcw, Search, SlidersHorizontal } from "lucide-react";
+import MultiSelectFilter from "./multi-select-filter";
 import { vehicleStatuses, type BusinessType, type VehicleRecord } from "@/lib/domain";
 import {
   activeVehicleFilterCount,
@@ -31,26 +32,32 @@ function labelForOption(field: VehicleFacetKey, value: string) {
 }
 
 export default function VehicleFilterBar({ records, filters, onChange, lockedType }: Props) {
-  const visibleFilters: VehicleFilters = lockedType && filters.type ? { ...filters, type: "" } : filters;
-  const effectiveFilters = lockedType ? { ...visibleFilters, type: lockedType } : visibleFilters;
+  const visibleFilters: VehicleFilters = lockedType && filters.type.length ? { ...filters, type: [] } : filters;
+  const effectiveFilters = lockedType ? { ...visibleFilters, type: [lockedType] } : visibleFilters;
   const filtered = filterVehicleRecords(records, effectiveFilters);
   const activeCount = activeVehicleFilterCount(visibleFilters);
-  const primaryCount = (["q", "type", "status", "warehouse", "customer"] as const).filter(key => visibleFilters[key]).length;
+  const primaryCount = (["q", "type", "status", "warehouse", "customer"] as const).filter(key => Array.isArray(visibleFilters[key]) ? visibleFilters[key].length > 0 : Boolean(visibleFilters[key])).length;
   const advancedCount = activeCount - primaryCount;
   const statusCounts = vehicleStatuses.map(status => ({ status, count: filtered.filter(vehicle => vehicle.status === status).length })).filter(item => item.count);
   const typeCounts = (["overseas", "domestic"] as const).map(type => ({ type, count: filtered.filter(vehicle => vehicle.type === type).length })).filter(item => item.count);
 
-  function update(key: VehicleFilterKey, value: string) {
-    onChange({ ...visibleFilters, [key]: value });
+  function update(key: VehicleFilterKey, value: string | string[]) {
+    onChange({ ...visibleFilters, [key]: value } as VehicleFilters);
   }
 
   function facet(field: VehicleFacetKey, label: string, include = true) {
     if (!include) return null;
     const options = vehicleFacetOptions(records, effectiveFilters, field);
-    return <label>{label}<select value={visibleFilters[field]} onChange={event => update(field, event.target.value)}>
-      <option value="">全部{label}</option>
-      {options.map(option => <option key={option.value} value={option.value}>{labelForOption(field, option.value)}（{option.count}）</option>)}
-    </select></label>;
+    const selected = visibleFilters[field];
+    const selectedOptions = selected
+      .filter(value => !options.some(option => option.value === value))
+      .map(value => ({ value, count: 0 }));
+    return <MultiSelectFilter
+      label={label}
+      value={selected}
+      options={[...options, ...selectedOptions].map(option => ({ ...option, label: labelForOption(field, option.value) }))}
+      onChange={value => update(field, value)}
+    />;
   }
 
   return <div className="vehicle-filter-bar">

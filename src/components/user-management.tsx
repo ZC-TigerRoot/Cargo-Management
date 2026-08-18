@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import SideNav from "@/components/side-nav";
 import { ChangelogButton } from "@/components/changelog-modal";
+import MultiSelectFilter from "@/components/multi-select-filter";
 import { formatCalendarDate } from "@/lib/datetime";
 import { roleLabels, type Role } from "@/lib/domain";
 import { useSession } from "@/lib/use-session";
@@ -60,8 +61,8 @@ export default function UserManagement() {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [query, setQuery] = useState("");
-  const [roleFilter, setRoleFilter] = useState<Role | "all">("all");
-  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("all");
+  const [roleFilter, setRoleFilter] = useState<Role[]>([]);
+  const [statusFilter, setStatusFilter] = useState<("active" | "inactive")[]>([]);
   const [dialogUser, setDialogUser] = useState<UserRow | "create" | null>(null);
   const [resetUser, setResetUser] = useState<UserRow | null>(null);
   const [pendingId, setPendingId] = useState("");
@@ -96,8 +97,8 @@ export default function UserManagement() {
     const keyword = query.trim().toLowerCase();
     return users.filter(user => {
       const matchesQuery = !keyword || `${user.name} ${user.email} ${roleLabels[user.role]} ${scopeLabel(user, options)}`.toLowerCase().includes(keyword);
-      const matchesRole = roleFilter === "all" || user.role === roleFilter;
-      const matchesStatus = statusFilter === "all" || (statusFilter === "active" ? user.active : !user.active);
+      const matchesRole = !roleFilter.length || roleFilter.includes(user.role);
+      const matchesStatus = !statusFilter.length || statusFilter.some(status => status === "active" ? user.active : !user.active);
       return matchesQuery && matchesRole && matchesStatus;
     });
   }, [options, query, roleFilter, statusFilter, users]);
@@ -199,15 +200,18 @@ export default function UserManagement() {
         <article className="panel user-list-panel">
           <div className="user-list-toolbar">
             <label className="search user-search"><Search /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索姓名、邮箱、角色或数据范围…" /></label>
-            <select value={roleFilter} onChange={event => setRoleFilter(event.target.value as Role | "all")} aria-label="按角色筛选">
-              <option value="all">全部角色</option>
-              {Object.entries(roleLabels).map(([role, label]) => <option value={role} key={role}>{label}</option>)}
-            </select>
-            <select value={statusFilter} onChange={event => setStatusFilter(event.target.value as "all" | "active" | "inactive")} aria-label="按状态筛选">
-              <option value="all">全部状态</option>
-              <option value="active">已启用</option>
-              <option value="inactive">已停用</option>
-            </select>
+            <MultiSelectFilter
+              label="角色"
+              value={roleFilter}
+              options={Object.entries(roleLabels).map(([role, label]) => ({ value: role, label }))}
+              onChange={value => setRoleFilter(value as Role[])}
+            />
+            <MultiSelectFilter
+              label="状态"
+              value={statusFilter}
+              options={[{ value: "active", label: "已启用" }, { value: "inactive", label: "已停用" }]}
+              onChange={value => setStatusFilter(value as ("active" | "inactive")[])}
+            />
             <span className="result-count">{filteredUsers.length} 位用户</span>
           </div>
 

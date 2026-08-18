@@ -37,7 +37,7 @@ export default function ModulePage({ kind }: { kind: Kind }) {
   const type: BusinessType | undefined = kind === "overseas" ? "overseas" : kind === "domestic" ? "domestic" : undefined;
   const { records, saveRecord, removeRecord, loading, loadError } = useVehicleRecords();
   const scopedRecords = useMemo(() => type ? records.filter(vehicle => vehicle.type === type) : records, [records, type]);
-  const effectiveFilters = useMemo(() => type ? { ...filters, type } : filters, [filters, type]);
+  const effectiveFilters = useMemo(() => type ? { ...filters, type: [type] } : filters, [filters, type]);
   const rows = useMemo(() => filterVehicleRecords(scopedRecords, effectiveFilters), [effectiveFilters, scopedRecords]);
   const exportHref = vehicleExportUrl(effectiveFilters);
   const recordModule = ["vehicles", "overseas", "domestic"].includes(kind);

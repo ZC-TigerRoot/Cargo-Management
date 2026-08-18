@@ -10,7 +10,7 @@ function sheetRows(book: XLSX.WorkBook, name: string) {
 
 describe("车辆明细 Excel 导出", () => {
   it("车型筛选后只导出命中车型的明细和对应业务工作表", () => {
-    const filtered = filterVehicleRecords(vehicles, { ...createVehicleFilters(), model: "宋 PLUS DM-i" });
+    const filtered = filterVehicleRecords(vehicles, { ...createVehicleFilters(), model: ["宋 PLUS DM-i"] });
     const book = createVehicleExportWorkbook(filtered);
 
     expect(book.SheetNames).toEqual(["海外仓"]);
@@ -105,7 +105,7 @@ describe("车辆明细 Excel 导出", () => {
   });
 
   it("筛选结果跨业务类型时分别保留各自的导入格式", () => {
-    const filtered = filterVehicleRecords(vehicles, { ...createVehicleFilters(), brand: "比亚迪" });
+    const filtered = filterVehicleRecords(vehicles, { ...createVehicleFilters(), brand: ["比亚迪"] });
     const book = createVehicleExportWorkbook(filtered);
 
     expect(book.SheetNames).toEqual(["海外仓", "国内仓"]);

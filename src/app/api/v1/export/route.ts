@@ -12,7 +12,7 @@ export async function GET(req: NextRequest) {
     const filters = vehicleFiltersFromSearchParams(req.nextUrl.searchParams);
     const allVehicles = (await listVehicles({ scope: vehicleScopeWhere(user) })).map(toVehicleRecord);
     const vehicles = filterVehicleRecords(allVehicles, filters);
-    const book = createVehicleExportWorkbook(vehicles, filters.type || undefined);
+    const book = createVehicleExportWorkbook(vehicles, filters.type.length === 1 ? filters.type[0] : undefined);
     const data = XLSX.write(book, { type: "buffer", bookType: "xlsx" });
     const stamp = localInputValue(new Date().toISOString(), CHINA_TIME_ZONE).replace(/[-:T]/g, "").slice(0, 12);
     return new NextResponse(data, { headers: {
