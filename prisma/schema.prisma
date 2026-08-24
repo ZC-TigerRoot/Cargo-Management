@@ -125,7 +125,7 @@ model Vehicle {
   status           VehicleStatus    @default(PENDING_INBOUND)
   version          Int              @default(1)
   inboundAt        DateTime?        @db.Date
-  inventoryAt      DateTime?        @db.Date
+  inventoryDays    Int?
   inboundAmount    Decimal?         @db.Decimal(18, 2)
   inboundBoeNo     String?
   outboundAt       DateTime?        @db.Date

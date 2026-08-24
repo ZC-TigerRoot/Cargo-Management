@@ -30,7 +30,7 @@ export type VehicleRecord = {
   customer?: string;
   status: VehicleStatus;
   inboundAt?: string;
-  inventoryAt?: string;
+  inventoryDays?: number;
   inboundAmount?: string;
   inboundBoeNo?: string;
   merchantReleaseAt?: string;
@@ -93,15 +93,16 @@ export const transitions: Record<string, VehicleStatus> = {
   PICKUP_CREATED: "待提货", OUTBOUND: "待签收", DRIVER_SIGNED: "已完成", EXCEPTION: "异常",
 };
 
-export function inventoryDays(inboundAt?: string, outboundAt?: string, now = new Date(), inventoryAt?: string) {
-  const start = inventoryAt ?? inboundAt;
+export function inventoryDays(inboundAt?: string, outboundAt?: string, now = new Date(), manualInventoryDays?: number) {
+  if (manualInventoryDays !== undefined) return manualInventoryDays;
+  const start = inboundAt;
   if (!start) return 0;
   const end = outboundAt ?? chinaToday(now);
   return Math.max(0, calendarDayDifference(start, end) + 1);
 }
 
-export function vehicleInventoryDays(vehicle: Pick<VehicleRecord, "inboundAt" | "inventoryAt" | "outboundAt">, now = new Date()) {
-  return inventoryDays(vehicle.inboundAt, vehicle.outboundAt, now, vehicle.inventoryAt);
+export function vehicleInventoryDays(vehicle: Pick<VehicleRecord, "inboundAt" | "inventoryDays" | "outboundAt">, now = new Date()) {
+  return inventoryDays(vehicle.inboundAt, vehicle.outboundAt, now, vehicle.inventoryDays);
 }
 
 export type Permission = "view" | "create" | "correct" | "delete" | "export" | "coordinatePickups" | "manageUsers" | "manageSettings" | "managePublicUrl";

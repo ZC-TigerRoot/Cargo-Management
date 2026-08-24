@@ -96,7 +96,7 @@ function matchesNumberRange(value: string | undefined, minimum: string, maximum:
 
 function matchesInventoryAge(vehicle: VehicleRecord, filter: VehicleFilters["inventoryAge"], now: Date) {
   if (!filter.length) return true;
-  if (!vehicle.inventoryAt && !vehicle.inboundAt) return false;
+  if (vehicle.inventoryDays === undefined && !vehicle.inboundAt) return false;
   const days = vehicleInventoryDays(vehicle, now);
   return filter.some(value => value === "0-7" && days <= 7 ||
     value === "8-15" && days >= 8 && days <= 15 ||
@@ -194,7 +194,7 @@ export function vehicleFacetOptions(records: readonly VehicleRecord[], filters: 
   for (const vehicle of candidates) {
     let value: string;
     if (field === "inventoryAge") {
-      if (!vehicle.inventoryAt && !vehicle.inboundAt) continue;
+      if (vehicle.inventoryDays === undefined && !vehicle.inboundAt) continue;
       const days = vehicleInventoryDays(vehicle, now);
       value = days <= 7 ? "0-7" : days <= 15 ? "8-15" : days <= 30 ? "16-30" : "31+";
     } else {

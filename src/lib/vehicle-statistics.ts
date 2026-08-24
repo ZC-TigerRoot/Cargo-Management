@@ -129,7 +129,7 @@ export function summarizeVehicleInventory(records: readonly VehicleRecord[], now
 }
 
 function inventoryAgeLabel(vehicle: VehicleRecord, now: Date) {
-  if (!vehicle.inventoryAt && !vehicle.inboundAt) return "未填写入库日期";
+  if (vehicle.inventoryDays === undefined && !vehicle.inboundAt) return "未填写入库日期";
   const days = vehicleInventoryDays(vehicle, now);
   if (days <= 7) return "0–7 天";
   if (days <= 15) return "8–15 天";

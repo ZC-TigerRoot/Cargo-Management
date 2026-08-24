@@ -95,7 +95,7 @@ export default function VehicleDetailPage() {
     ["入库仓库名称", vehicle.warehouse],
     ["仓库时区", vehicle.warehouseTimezone],
     [overseas ? "入保税仓日期" : "入仓日期", formatDate(vehicle.inboundAt, vehicle.warehouseTimezone)],
-    ["库存日期", formatDate(vehicle.inventoryAt, vehicle.warehouseTimezone)],
+    ["库存时间", vehicle.inventoryDays === undefined ? undefined : `${vehicle.inventoryDays} 天`],
     ["入库金额", vehicle.inboundAmount],
     ["入库 BOE 号", vehicle.inboundBoeNo],
     ...releaseFacts,

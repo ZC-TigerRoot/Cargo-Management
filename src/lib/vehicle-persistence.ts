@@ -20,7 +20,7 @@ export function vehicleScalarData(data: VehiclePayload) {
     brand: data.brand ?? null,
     hsCode: data.hsCode ?? null,
     inboundAt: dateOrNull(data.inboundAt),
-    inventoryAt: dateOrNull(data.inventoryAt),
+    inventoryDays: data.inventoryDays ?? null,
     inboundAmount: data.inboundAmount ?? null,
     inboundBoeNo: data.inboundBoeNo ?? null,
     outboundAt: dateOrNull(data.outboundAt),

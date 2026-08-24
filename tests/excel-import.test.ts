@@ -19,6 +19,7 @@ import { domesticExcelHeaders, overseasExcelHeaders } from "../src/lib/vehicle-e
 const legacyHeaderAliases: Readonly<Record<string, string>> = {
   入保税仓库日期: "入保税仓库时间",
   入仓库日期: "入仓库时间",
+  库存时间: "库存日期",
   商社通知放车日期: "商社通知放车时间",
   客户通知做过户文件日期: "客户通知做过户文件时间",
   客户通知放车日期: "客户通知放车时间",
@@ -183,6 +184,24 @@ describe("Excel 导入预校验", () => {
       "客户交付签收单日期格式无效",
       "外代交付签收单给商社日期格式无效",
     ]));
+  });
+
+  it("把库存时间导入为非负整数天数", async () => {
+    const result = await checkWorkbook(workbookFile(domesticExcelHeaders, [{
+      车架号: "VIN-INVENTORY-TIME",
+      "PO#": "PO-INVENTORY-TIME",
+      库存时间: 12,
+    }]));
+
+    expect(result.validRows).toBe(1);
+    expect(result.rows[0].payload.inventoryDays).toBe(12);
+
+    const invalid = await checkWorkbook(workbookFile(domesticExcelHeaders, [{
+      车架号: "VIN-INVENTORY-TIME-INVALID",
+      "PO#": "PO-INVENTORY-TIME",
+      库存时间: 1.5,
+    }]));
+    expect(invalid.errors[0].errors).toContain("库存时间格式无效");
   });
 
   it("将同批次已有车辆识别为更新，并拒绝批次冲突且隐藏内部行数据", async () => {

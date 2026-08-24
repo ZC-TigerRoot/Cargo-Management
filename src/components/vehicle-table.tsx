@@ -25,7 +25,7 @@ const columns: Column[] = [
   { id: "brand", label: "品牌", value: vehicle => vehicle.brand },
   { id: "referenceNo", label: "提单号 / PO#", value: vehicle => vehicle.referenceNo },
   { id: "inboundAt", label: "入库日期", value: vehicle => vehicle.inboundAt, render: vehicle => vehicle.inboundAt ? formatCalendarDate(vehicle.inboundAt) : "—" },
-  { id: "inventoryAt", label: "库存日期", value: vehicle => vehicle.inventoryAt, render: vehicle => vehicle.inventoryAt ? formatCalendarDate(vehicle.inventoryAt) : "—" },
+  { id: "inventoryTime", label: "库存时间", value: vehicle => vehicle.inventoryDays, render: vehicle => vehicle.inventoryDays === undefined ? "—" : `${vehicle.inventoryDays} 天` },
   { id: "inboundAmount", label: "入库金额", value: vehicle => vehicle.inboundAmount ? Number(vehicle.inboundAmount) : undefined, render: vehicle => vehicle.inboundAmount || "—" },
   { id: "inboundBoeNo", label: "入库 BOE 号", value: vehicle => vehicle.inboundBoeNo },
   { id: "outboundAt", label: "出库日期", value: vehicle => vehicle.outboundAt, render: vehicle => vehicle.outboundAt ? formatCalendarDate(vehicle.outboundAt) : "—" },

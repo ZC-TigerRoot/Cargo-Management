@@ -16,7 +16,7 @@ describe("车辆持久化映射", () => {
       brand: null,
       hsCode: null,
       inboundAt: null,
-      inventoryAt: null,
+      inventoryDays: null,
       inboundAmount: null,
       inboundBoeNo: null,
       outboundAt: null,
@@ -35,6 +35,7 @@ describe("车辆持久化映射", () => {
       vin: "test-vin-001",
       model: "测试车型",
       inboundAt: "2026-07-17",
+      inventoryDays: 12,
       inboundAmount: "1200.50",
     });
     const data = vehicleScalarData(payload);
@@ -42,6 +43,7 @@ describe("车辆持久化映射", () => {
     expect(data.vin).toBe("TEST-VIN-001");
     expect(data.model).toBe("测试车型");
     expect(data.inboundAt).toEqual(new Date("2026-07-17T00:00:00.000Z"));
+    expect(data.inventoryDays).toBe(12);
     expect(data.inboundAmount).toBe("1200.50");
   });
 

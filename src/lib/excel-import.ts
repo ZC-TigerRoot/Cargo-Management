@@ -49,7 +49,7 @@ const DATE_TEXT = /^(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d{
 const HEADER_ALIASES: Readonly<Record<string, readonly string[]>> = {
   入保税仓库日期: ["入保税仓库时间"],
   入仓库日期: ["入仓库时间"],
-  库存日期: ["库存时间"],
+  库存时间: ["库存日期"],
   商社通知放车日期: ["商社通知放车时间"],
   客户通知做过户文件日期: ["客户通知做过户文件时间"],
   客户通知放车日期: ["客户通知放车时间"],
@@ -75,6 +75,12 @@ function calendarDate(value: unknown, date1904 = false) {
   if (match[2] && (Number(match[2]) > 23 || Number(match[3]) > 59 || Number(match[4] ?? 0) > 59)) return undefined;
   if (match[5] && (Number(match[5]) > 14 || Number(match[6]) > 59 || Number(match[5]) === 14 && Number(match[6]) > 0)) return undefined;
   return match[1];
+}
+
+function nonNegativeInteger(value: unknown) {
+  if (value === null || value === undefined || value === "") return undefined;
+  const normalized = typeof value === "number" ? value : typeof value === "string" ? Number(value.trim()) : Number.NaN;
+  return Number.isSafeInteger(normalized) && normalized >= 0 && normalized <= 2_147_483_647 ? normalized : undefined;
 }
 
 function extraText(value: unknown, key: string) {
@@ -107,7 +113,7 @@ function payloadFor(row: Record<string, unknown>, overseas: boolean, date1904: b
     warehouseTimezone: "Asia/Shanghai",
     customer: text(row["所属客人"]),
     inboundAt: calendarDate(row[inboundHeader], date1904),
-    inventoryAt: calendarDate(row["库存日期"], date1904),
+    inventoryDays: nonNegativeInteger(row["库存时间"]),
     inboundAmount: text(row["入库金额"]),
     inboundBoeNo: text(row["入库BOE号"]),
     merchantReleaseAt: calendarDate(row["商社通知放车日期"], date1904),
@@ -156,7 +162,7 @@ export async function checkWorkbook(file: File): Promise<CheckedWorkbook> {
     header,
     acceptedHeaders(header).find(candidate => headers.includes(candidate)) ?? header,
   ] as const));
-  const optionalHeaders = new Set(["库存日期"]);
+  const optionalHeaders = new Set(["库存时间"]);
   const missingHeaders = expected.filter(header => !optionalHeaders.has(header) && !acceptedHeaders(header).some(candidate => headers.includes(candidate)));
   const ignoredColumns = [...new Set(["库存天数", ...headers.filter(header => !recognizedHeaders.has(header))])];
   const normalizedRows = sourceRows.map(row => Object.fromEntries(expected.map(header => [
@@ -167,7 +173,6 @@ export async function checkWorkbook(file: File): Promise<CheckedWorkbook> {
   const outboundNoticeHeader = "出库通知单交付给商社日期";
   const dateColumns: [string, string][] = [
     [inboundHeader, "入库日期格式无效"],
-    ["库存日期", "库存日期格式无效"],
     ["商社通知放车日期", "商社通知放车日期格式无效"],
     ["实际出库日期", "实际出库日期格式无效"],
     [outboundNoticeHeader, `${outboundNoticeHeader}格式无效`],
@@ -196,10 +201,10 @@ export async function checkWorkbook(file: File): Promise<CheckedWorkbook> {
       return [header, parsed] as const;
     }));
     const inbound = parsedDates.get(inboundHeader);
-    const inventoryAt = parsedDates.get("库存日期");
+    const inventoryDays = nonNegativeInteger(row["库存时间"]);
     const outbound = parsedDates.get("实际出库日期");
+    if (text(row["库存时间"]) && inventoryDays === undefined) errors.push("库存时间格式无效");
     if (inbound && outbound && inbound > outbound) errors.push("入库日期晚于实际出库日期");
-    if (inventoryAt && outbound && inventoryAt > outbound) errors.push("库存日期晚于实际出库日期");
     for (const amountHeader of ["入库金额", "出库金额"]) {
       const value = text(row[amountHeader]);
       if (value && (!/^\d{1,16}(?:\.\d{1,2})?$/.test(value) || Number(value) < 0)) errors.push(`${amountHeader}格式无效`);
@@ -231,7 +236,7 @@ export async function checkWorkbook(file: File): Promise<CheckedWorkbook> {
       vin: true,
       extra: true,
       inboundAt: true,
-      inventoryAt: true,
+      inventoryDays: true,
       outboundAt: true,
       warehouse: { select: { name: true, location: true } },
       batch: {
@@ -271,13 +276,9 @@ export async function checkWorkbook(file: File): Promise<CheckedWorkbook> {
       continue;
     }
     const inboundAt = item.payload.inboundAt ?? (vehicle.inboundAt ? fromPrismaDate(vehicle.inboundAt) : undefined);
-    const inventoryAt = item.payload.inventoryAt ?? (vehicle.inventoryAt ? fromPrismaDate(vehicle.inventoryAt) : undefined);
     const outboundAt = item.payload.outboundAt ?? (vehicle.outboundAt ? fromPrismaDate(vehicle.outboundAt) : undefined);
     if (inboundAt && outboundAt && inboundAt > outboundAt && !item.errors.includes("入库日期晚于实际出库日期")) {
       item.errors.push("入库日期晚于实际出库日期");
-    }
-    if (inventoryAt && outboundAt && inventoryAt > outboundAt && !item.errors.includes("库存日期晚于实际出库日期")) {
-      item.errors.push("库存日期晚于实际出库日期");
     }
     const etd = item.payload.etd ?? (vehicle.batch?.etd ? fromPrismaDate(vehicle.batch.etd) : calendarDate(extraText(vehicle.extra, "etd")));
     const eta = item.payload.eta ?? (vehicle.batch?.eta ? fromPrismaDate(vehicle.batch.eta) : calendarDate(extraText(vehicle.extra, "eta")));

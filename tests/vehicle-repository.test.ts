@@ -34,7 +34,7 @@ function vehicle(overrides: Record<string, unknown> = {}): VehicleWithRelations 
     hsCode: null,
     status: "IN_STOCK",
     inboundAt: null,
-    inventoryAt: null,
+    inventoryDays: null,
     inboundAmount: null,
     inboundBoeNo: null,
     outboundAt: null,
@@ -94,8 +94,8 @@ describe("车辆仓储映射与并发保护", () => {
     });
   });
 
-  it("保留手工库存日期", () => {
-    expect(toVehicleRecord(vehicle({ inventoryAt: new Date("2026-07-05T00:00:00.000Z") })).inventoryAt).toBe("2026-07-05");
+  it("保留手工库存时间", () => {
+    expect(toVehicleRecord(vehicle({ inventoryDays: 12 })).inventoryDays).toBe(12);
   });
 
   it("清空业务日期后隐藏旧事件并保留撤销历史", () => {

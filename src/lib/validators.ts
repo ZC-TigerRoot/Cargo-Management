@@ -16,6 +16,15 @@ const optionalAmount = z.union([z.string().trim(), z.number().finite()]).optiona
   }
   return normalized;
 });
+const optionalNonNegativeInteger = z.union([z.string().trim(), z.number().finite()]).optional().transform((value, ctx) => {
+  if (value === undefined || value === "") return undefined;
+  const normalized = typeof value === "number" ? value : Number(value);
+  if (!Number.isSafeInteger(normalized) || normalized < 0 || normalized > 2_147_483_647) {
+    ctx.addIssue({ code: "custom", message: "库存时间必须为非负整数" });
+    return z.NEVER;
+  }
+  return normalized;
+});
 
 export const vehiclePayload = z.object({
   vin: optionalVin,
@@ -35,7 +44,7 @@ export const vehiclePayload = z.object({
   warehouseTimezone: z.literal(CHINA_TIME_ZONE),
   customer: optionalText,
   inboundAt: optionalDate,
-  inventoryAt: optionalDate,
+  inventoryDays: optionalNonNegativeInteger,
   inboundAmount: optionalAmount,
   inboundBoeNo: optionalText,
   merchantReleaseAt: optionalDate,
@@ -53,9 +62,6 @@ export const vehiclePayload = z.object({
 }).superRefine((data, ctx) => {
   if (data.inboundAt && data.outboundAt && data.inboundAt > data.outboundAt) {
     ctx.addIssue({ code: "custom", path: ["outboundAt"], message: "实际出库日期不能早于入库日期" });
-  }
-  if (data.inventoryAt && data.outboundAt && data.inventoryAt > data.outboundAt) {
-    ctx.addIssue({ code: "custom", path: ["inventoryAt"], message: "库存日期不能晚于实际出库日期" });
   }
   if (data.etd && data.eta && data.etd > data.eta) {
     ctx.addIssue({ code: "custom", path: ["eta"], message: "ETA 不能早于 ETD" });
