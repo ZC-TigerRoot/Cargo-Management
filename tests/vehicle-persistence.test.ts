@@ -16,6 +16,7 @@ describe("车辆持久化映射", () => {
       brand: null,
       hsCode: null,
       inboundAt: null,
+      inventoryAt: null,
       inboundAmount: null,
       inboundBoeNo: null,
       outboundAt: null,

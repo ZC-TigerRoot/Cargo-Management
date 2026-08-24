@@ -4,13 +4,13 @@ import { normalizeCalendarDate } from "./datetime";
 
 export const overseasExcelHeaders = [
   "提单号", "车架号", "车型", "HS#", "起运港", "目的港", "船名航次", "ETD", "ETA", "保税仓地点",
-  "入保税仓库日期", "入库金额", "入库BOE号", "入库仓库名称", "所属客人", "商社通知放车日期", "客户通知做过户文件日期",
+  "入保税仓库日期", "库存日期", "入库金额", "入库BOE号", "入库仓库名称", "所属客人", "商社通知放车日期", "客户通知做过户文件日期",
   "客户通知放车日期", "出库提货明细", "实际出库日期", "出库BOE号", "BOE抬头", "出库金额", "库存天数", "出库通知单交付给商社日期",
   "客户交付签收单日期", "外代交付签收单给商社日期", "备注",
 ] as const;
 
 export const domesticExcelHeaders = [
-  "车架号", "车型", "品牌", "生产商", "PO#", "仓库地点", "入仓库日期", "入库金额", "入库BOE号", "入库仓库名称", "所属客人",
+  "车架号", "车型", "品牌", "生产商", "PO#", "仓库地点", "入仓库日期", "库存日期", "入库金额", "入库BOE号", "入库仓库名称", "所属客人",
   "商社通知放车日期", "出库提货明细", "实际出库日期", "出库BOE号", "BOE抬头", "出库金额", "库存天数", "出库通知单交付给商社日期",
   "客户交付签收单日期", "外代交付签收单给商社日期", "备注",
 ] as const;
@@ -21,8 +21,13 @@ function excelDate(value: string | undefined) {
   return value ? normalizeCalendarDate(value) : "";
 }
 
-function excelInventoryDays(inboundAt: string | undefined, outboundAt: string | undefined) {
-  return inventoryDays(excelDate(inboundAt) || undefined, excelDate(outboundAt) || undefined);
+function excelInventoryDays(vehicle: VehicleRecord) {
+  return inventoryDays(
+    excelDate(vehicle.inboundAt) || undefined,
+    excelDate(vehicle.outboundAt) || undefined,
+    new Date(),
+    excelDate(vehicle.inventoryAt) || undefined,
+  );
 }
 
 function overseasRow(vehicle: VehicleRecord): ExportRow {
@@ -38,6 +43,7 @@ function overseasRow(vehicle: VehicleRecord): ExportRow {
     ETA: excelDate(vehicle.eta),
     保税仓地点: vehicle.warehouseLocation,
     入保税仓库日期: excelDate(vehicle.inboundAt),
+    库存日期: excelDate(vehicle.inventoryAt),
     入库金额: vehicle.inboundAmount,
     "入库BOE号": vehicle.inboundBoeNo,
     入库仓库名称: vehicle.warehouse,
@@ -50,7 +56,7 @@ function overseasRow(vehicle: VehicleRecord): ExportRow {
     "出库BOE号": vehicle.outboundBoeNo,
     "BOE抬头": vehicle.outboundBoeTitle,
     出库金额: vehicle.outboundAmount,
-    库存天数: excelInventoryDays(vehicle.inboundAt, vehicle.outboundAt),
+    库存天数: excelInventoryDays(vehicle),
     出库通知单交付给商社日期: excelDate(vehicle.outboundNoticeDeliveredAt),
     客户交付签收单日期: excelDate(vehicle.customerReceiptDeliveredAt),
     外代交付签收单给商社日期: excelDate(vehicle.agentReceiptDeliveredAt),
@@ -67,6 +73,7 @@ function domesticRow(vehicle: VehicleRecord): ExportRow {
     "PO#": vehicle.referenceNo,
     仓库地点: vehicle.warehouseLocation,
     入仓库日期: excelDate(vehicle.inboundAt),
+    库存日期: excelDate(vehicle.inventoryAt),
     入库金额: vehicle.inboundAmount,
     "入库BOE号": vehicle.inboundBoeNo,
     入库仓库名称: vehicle.warehouse,
@@ -77,7 +84,7 @@ function domesticRow(vehicle: VehicleRecord): ExportRow {
     "出库BOE号": vehicle.outboundBoeNo,
     "BOE抬头": vehicle.outboundBoeTitle,
     出库金额: vehicle.outboundAmount,
-    库存天数: excelInventoryDays(vehicle.inboundAt, vehicle.outboundAt),
+    库存天数: excelInventoryDays(vehicle),
     出库通知单交付给商社日期: excelDate(vehicle.outboundNoticeDeliveredAt),
     客户交付签收单日期: excelDate(vehicle.customerReceiptDeliveredAt),
     外代交付签收单给商社日期: excelDate(vehicle.agentReceiptDeliveredAt),

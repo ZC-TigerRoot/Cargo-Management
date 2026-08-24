@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from "react";
 import Link from "next/link";
 import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, GripVertical, SlidersHorizontal, Trash2 } from "lucide-react";
-import { inventoryDays, type VehicleRecord } from "@/lib/domain";
+import { vehicleInventoryDays, type VehicleRecord } from "@/lib/domain";
 import { formatCalendarDate } from "@/lib/datetime";
 
 type Column = {
@@ -18,13 +18,14 @@ const columns: Column[] = [
   { id: "business", label: "业务 / 批次", value: vehicle => `${vehicle.type} ${vehicle.referenceNo ?? ""}`, render: vehicle => <><span className={`type type-${vehicle.type}`}>{vehicle.type === "overseas" ? "海外仓" : "国内仓"}</span><small>{vehicle.referenceNo || "未填写批次"}</small></> },
   { id: "warehouse", label: "仓库", value: vehicle => `${vehicle.warehouse ?? ""} ${vehicle.warehouseLocation ?? ""}`, render: vehicle => <>{vehicle.warehouse || "—"}<small>{vehicle.warehouseLocation || "未填写地点"}</small></> },
   { id: "customer", label: "所属客户", value: vehicle => vehicle.customer },
-  { id: "inventoryDays", label: "库存天数", value: vehicle => inventoryDays(vehicle.inboundAt, vehicle.outboundAt), render: vehicle => <>{inventoryDays(vehicle.inboundAt, vehicle.outboundAt)} 天</> },
+  { id: "inventoryDays", label: "库存天数", value: vehicle => vehicleInventoryDays(vehicle), render: vehicle => <>{vehicleInventoryDays(vehicle)} 天</> },
   { id: "status", label: "状态", value: vehicle => vehicle.status, render: vehicle => <span className={`status status-${vehicle.status}`}>{vehicle.status}</span> },
   { id: "vin", label: "车架号", value: vehicle => vehicle.vin },
   { id: "model", label: "车型", value: vehicle => vehicle.model },
   { id: "brand", label: "品牌", value: vehicle => vehicle.brand },
   { id: "referenceNo", label: "提单号 / PO#", value: vehicle => vehicle.referenceNo },
   { id: "inboundAt", label: "入库日期", value: vehicle => vehicle.inboundAt, render: vehicle => vehicle.inboundAt ? formatCalendarDate(vehicle.inboundAt) : "—" },
+  { id: "inventoryAt", label: "库存日期", value: vehicle => vehicle.inventoryAt, render: vehicle => vehicle.inventoryAt ? formatCalendarDate(vehicle.inventoryAt) : "—" },
   { id: "inboundAmount", label: "入库金额", value: vehicle => vehicle.inboundAmount ? Number(vehicle.inboundAmount) : undefined, render: vehicle => vehicle.inboundAmount || "—" },
   { id: "inboundBoeNo", label: "入库 BOE 号", value: vehicle => vehicle.inboundBoeNo },
   { id: "outboundAt", label: "出库日期", value: vehicle => vehicle.outboundAt, render: vehicle => vehicle.outboundAt ? formatCalendarDate(vehicle.outboundAt) : "—" },

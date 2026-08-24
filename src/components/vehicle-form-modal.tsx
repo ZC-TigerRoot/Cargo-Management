@@ -41,6 +41,7 @@ export default function VehicleFormModal({ defaultType = "overseas", initial, on
       warehouseTimezone: CHINA_TIME_ZONE,
       customer: text("customer"),
       inboundAt: date("inboundAt"),
+      inventoryAt: date("inventoryAt"),
       inboundAmount: text("inboundAmount"),
       inboundBoeNo: text("inboundBoeNo"),
       merchantReleaseAt: date("merchantReleaseAt"),
@@ -128,6 +129,7 @@ export default function VehicleFormModal({ defaultType = "overseas", initial, on
             <label>所属客人<input name="customer" defaultValue={value("customer")} /></label>
             <label>系统时区<input value="中国标准时间（Asia/Shanghai）" disabled readOnly /></label>
             <label>{type === "overseas" ? "入保税仓库日期" : "入仓库日期"}<input type="date" name="inboundAt" defaultValue={value("inboundAt")} /></label>
+            <label>库存日期（可选）<input type="date" name="inventoryAt" defaultValue={value("inventoryAt")} /></label>
             <label>入库金额<input type="number" name="inboundAmount" min="0" step="0.01" defaultValue={value("inboundAmount")} /></label>
             <label>入库 BOE 号<input name="inboundBoeNo" defaultValue={value("inboundBoeNo")} /></label>
           </div>
@@ -151,7 +153,7 @@ export default function VehicleFormModal({ defaultType = "overseas", initial, on
           </div>
         </fieldset>
 
-        <p className="calculated-note">库存天数由入库日期和实际出库日期自动计算，无需填写。</p>
+        <p className="calculated-note">库存日期填写后优先作为库存天数起算日；未填写时按入库日期计算，未出库则计算到今天。</p>
         {error && <p className="form-error" role="alert">{error}</p>}
         <div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>取消</button><button className="primary-button" disabled={submitting}>{submitting ? "保存中…" : "保存记录"}</button></div>
       </form>

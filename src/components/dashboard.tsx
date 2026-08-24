@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { Boxes, CarFront, CircleAlert, Download, LogOut, Menu, Plus, QrCode, Warehouse } from "lucide-react";
-import { can, inventoryDays, roleLabels } from "@/lib/domain";
+import { can, roleLabels, vehicleInventoryDays } from "@/lib/domain";
 import { CHINA_TIME_ZONE, chinaToday } from "@/lib/datetime";
 import { useVehicleRecords } from "@/lib/use-vehicle-records";
 import { useSession } from "@/lib/use-session";
@@ -27,10 +27,10 @@ export default function Dashboard() {
   const outboundToday = rows.filter(vehicle => vehicle.outboundAt === today).length;
   const inStorage = rows.filter(vehicle => !vehicle.outboundAt && vehicle.status !== "待入库");
   const ageBuckets = [
-    { n: "0–7天", count: inStorage.filter(vehicle => inventoryDays(vehicle.inboundAt) <= 7).length, c: "green" },
-    { n: "8–15天", count: inStorage.filter(vehicle => { const days = inventoryDays(vehicle.inboundAt); return days >= 8 && days <= 15; }).length, c: "teal" },
-    { n: "16–30天", count: inStorage.filter(vehicle => { const days = inventoryDays(vehicle.inboundAt); return days >= 16 && days <= 30; }).length, c: "gold" },
-    { n: "30天以上", count: inStorage.filter(vehicle => inventoryDays(vehicle.inboundAt) > 30).length, c: "red" },
+    { n: "0–7天", count: inStorage.filter(vehicle => vehicleInventoryDays(vehicle) <= 7).length, c: "green" },
+    { n: "8–15天", count: inStorage.filter(vehicle => { const days = vehicleInventoryDays(vehicle); return days >= 8 && days <= 15; }).length, c: "teal" },
+    { n: "16–30天", count: inStorage.filter(vehicle => { const days = vehicleInventoryDays(vehicle); return days >= 16 && days <= 30; }).length, c: "gold" },
+    { n: "30天以上", count: inStorage.filter(vehicle => vehicleInventoryDays(vehicle) > 30).length, c: "red" },
   ];
   const maxAgeCount = Math.max(1, ...ageBuckets.map(bucket => bucket.count));
   const warehouses = Object.entries(inStorage.reduce<Record<string, number>>((result, vehicle) => {

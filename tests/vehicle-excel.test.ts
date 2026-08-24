@@ -63,6 +63,7 @@ describe("车辆明细 Excel 导出", () => {
         etd: "2026-07-01",
         eta: "2026-07-02",
         inboundAt: "2026-07-03",
+        inventoryAt: "2026-07-03",
         merchantReleaseAt: "2026-07-04",
         transferDocNoticeAt: "2026-07-05",
         customerReleaseAt: "2026-07-06",
@@ -74,6 +75,7 @@ describe("车辆明细 Excel 导出", () => {
       {
         ...domestic,
         inboundAt: "2026-08-01",
+        inventoryAt: "2026-08-01",
         merchantReleaseAt: "2026-08-02",
         outboundAt: "2026-08-03",
         outboundNoticeDeliveredAt: "2026-08-04",
@@ -86,6 +88,7 @@ describe("车辆明细 Excel 导出", () => {
       ETD: "2026-07-01",
       ETA: "2026-07-02",
       入保税仓库日期: "2026-07-03",
+      库存日期: "2026-07-03",
       商社通知放车日期: "2026-07-04",
       客户通知做过户文件日期: "2026-07-05",
       客户通知放车日期: "2026-07-06",
@@ -96,6 +99,7 @@ describe("车辆明细 Excel 导出", () => {
     });
     expect(sheetRows(book, "国内仓")[0]).toMatchObject({
       入仓库日期: "2026-08-01",
+      库存日期: "2026-08-01",
       商社通知放车日期: "2026-08-02",
       实际出库日期: "2026-08-03",
       出库通知单交付给商社日期: "2026-08-04",

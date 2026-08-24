@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { can, inventoryDays, transitions } from "../src/lib/domain";
+import { can, inventoryDays, transitions, vehicleInventoryDays } from "../src/lib/domain";
 import { driverSubmission, vehicleDeleteInput, vehicleInput, vehicleUpdateInput } from "../src/lib/validators";
 import { addCalendarDays, chinaToday, fromPrismaDate, localInputValue, toPrismaDate, zonedLocalToIso } from "../src/lib/datetime";
 import { matchesPickupSearch, pickupTaskMatchesSearch, pickupVehicleSearchValues } from "../src/lib/pickup-search";
@@ -8,6 +8,10 @@ describe("库存领域规则", () => {
   it("同日入出库计为一天", () => expect(inventoryDays("2026-07-01", "2026-07-01")).toBe(1));
   it("出库后按首尾日期计算库存天数", () => expect(inventoryDays("2026-07-01", "2026-07-11", new Date("2026-08-01"))).toBe(11));
   it("在库天数按当前日期计算", () => expect(inventoryDays("2026-07-01", undefined, new Date("2026-07-03T00:00:00Z"))).toBe(3));
+  it("填写库存日期后从库存日期计算并随当前日期递增", () => {
+    expect(vehicleInventoryDays({ inboundAt: "2026-07-01", inventoryAt: "2026-07-25" }, new Date("2026-08-01T00:00:00Z"))).toBe(8);
+    expect(vehicleInventoryDays({ inboundAt: "2026-07-01", inventoryAt: "2026-07-25", outboundAt: "2026-07-31" }, new Date("2026-08-01T00:00:00Z"))).toBe(7);
+  });
   it("货代和管理员可导出，客户与仓管不可导出", () => {
     expect(can("forwarder", "export")).toBe(true);
     expect(can("warehouse", "export")).toBe(false);
@@ -162,6 +166,15 @@ describe("车辆录入校验", () => {
     const result = vehicleInput.safeParse({
       ...base,
       inboundAt: "2026-07-12",
+      outboundAt: "2026-07-11",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("拒绝晚于实际出库日期的库存日期", () => {
+    const result = vehicleInput.safeParse({
+      ...base,
+      inventoryAt: "2026-07-12",
       outboundAt: "2026-07-11",
     });
     expect(result.success).toBe(false);

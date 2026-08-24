@@ -1,4 +1,4 @@
-import { inventoryDays, vehicleStatuses, type BusinessType, type VehicleRecord, type VehicleStatus } from "./domain";
+import { vehicleInventoryDays, vehicleStatuses, type BusinessType, type VehicleRecord, type VehicleStatus } from "./domain";
 import { isCalendarDate, normalizeCalendarDate } from "./datetime";
 
 export const EMPTY_FACET_VALUE = "__empty__";
@@ -96,8 +96,8 @@ function matchesNumberRange(value: string | undefined, minimum: string, maximum:
 
 function matchesInventoryAge(vehicle: VehicleRecord, filter: VehicleFilters["inventoryAge"], now: Date) {
   if (!filter.length) return true;
-  if (!vehicle.inboundAt) return false;
-  const days = inventoryDays(vehicle.inboundAt, vehicle.outboundAt, now);
+  if (!vehicle.inventoryAt && !vehicle.inboundAt) return false;
+  const days = vehicleInventoryDays(vehicle, now);
   return filter.some(value => value === "0-7" && days <= 7 ||
     value === "8-15" && days >= 8 && days <= 15 ||
     value === "16-30" && days >= 16 && days <= 30 ||
@@ -194,8 +194,8 @@ export function vehicleFacetOptions(records: readonly VehicleRecord[], filters: 
   for (const vehicle of candidates) {
     let value: string;
     if (field === "inventoryAge") {
-      if (!vehicle.inboundAt) continue;
-      const days = inventoryDays(vehicle.inboundAt, vehicle.outboundAt, now);
+      if (!vehicle.inventoryAt && !vehicle.inboundAt) continue;
+      const days = vehicleInventoryDays(vehicle, now);
       value = days <= 7 ? "0-7" : days <= 15 ? "8-15" : days <= 30 ? "16-30" : "31+";
     } else {
       value = String(vehicle[field] || EMPTY_FACET_VALUE);

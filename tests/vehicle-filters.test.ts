@@ -39,6 +39,12 @@ describe("车辆独立筛选与统计", () => {
     expect(filterVehicleRecords(recordsWithMissingBrand, missingBrandFilters).map(vehicle => vehicle.id)).toEqual(["missing-brand"]);
   });
 
+  it("库存账龄筛选优先使用手工库存日期", () => {
+    const manual = { ...vehicles[0], id: "manual-inventory-date", inventoryAt: "2026-07-26" };
+    const filters = { ...createVehicleFilters(), inventoryAge: ["0-7" as const] };
+    expect(filterVehicleRecords([manual], filters, [], new Date("2026-08-01T00:00:00Z")).map(vehicle => vehicle.id)).toEqual(["manual-inventory-date"]);
+  });
+
   it("字段选项数量会保留其他筛选条件并忽略自身条件", () => {
     const filters = { ...createVehicleFilters(), customer: ["新程汽车"], status: ["异常" as const] };
     expect(vehicleFacetOptions(vehicles, filters, "status")).toEqual([

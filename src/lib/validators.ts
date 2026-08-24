@@ -35,6 +35,7 @@ export const vehiclePayload = z.object({
   warehouseTimezone: z.literal(CHINA_TIME_ZONE),
   customer: optionalText,
   inboundAt: optionalDate,
+  inventoryAt: optionalDate,
   inboundAmount: optionalAmount,
   inboundBoeNo: optionalText,
   merchantReleaseAt: optionalDate,
@@ -52,6 +53,9 @@ export const vehiclePayload = z.object({
 }).superRefine((data, ctx) => {
   if (data.inboundAt && data.outboundAt && data.inboundAt > data.outboundAt) {
     ctx.addIssue({ code: "custom", path: ["outboundAt"], message: "实际出库日期不能早于入库日期" });
+  }
+  if (data.inventoryAt && data.outboundAt && data.inventoryAt > data.outboundAt) {
+    ctx.addIssue({ code: "custom", path: ["inventoryAt"], message: "库存日期不能晚于实际出库日期" });
   }
   if (data.etd && data.eta && data.etd > data.eta) {
     ctx.addIssue({ code: "custom", path: ["eta"], message: "ETA 不能早于 ETD" });

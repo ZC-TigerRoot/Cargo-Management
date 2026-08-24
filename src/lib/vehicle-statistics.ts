@@ -1,4 +1,4 @@
-import { inventoryDays, vehicleStatuses, type VehicleRecord } from "./domain";
+import { vehicleInventoryDays, vehicleStatuses, type VehicleRecord } from "./domain";
 
 export const vehiclePivotDimensions = [
   "customer",
@@ -56,10 +56,6 @@ function distinctVehicles(records: readonly VehicleRecord[]) {
 
 function hasEvent(vehicle: VehicleRecord, type: string) {
   return vehicle.history?.some(event => event.type === type) ?? false;
-}
-
-function vehicleInventoryDays(vehicle: VehicleRecord, now: Date) {
-  return inventoryDays(vehicle.inboundAt, vehicle.outboundAt, now);
 }
 
 export function isPhysicalInventory(vehicle: VehicleRecord) {
@@ -133,7 +129,7 @@ export function summarizeVehicleInventory(records: readonly VehicleRecord[], now
 }
 
 function inventoryAgeLabel(vehicle: VehicleRecord, now: Date) {
-  if (!vehicle.inboundAt) return "未填写入库日期";
+  if (!vehicle.inventoryAt && !vehicle.inboundAt) return "未填写入库日期";
   const days = vehicleInventoryDays(vehicle, now);
   if (days <= 7) return "0–7 天";
   if (days <= 15) return "8–15 天";
