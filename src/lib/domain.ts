@@ -11,6 +11,7 @@ export type VehicleStatus = typeof vehicleStatuses[number];
 export type VehicleRecord = {
   id: string;
   version: number;
+  currentCycle?: number;
   updateSequence: string;
   vin?: string;
   model?: string;
@@ -52,6 +53,7 @@ export type VehicleRecord = {
 
 export type VehicleEventRecord = {
   id: string;
+  cycle?: number;
   type: string;
   title: string;
   occurredAt: string;
@@ -86,7 +88,7 @@ export type VehicleAuditRecord = {
   changes: VehicleAuditChange[];
 };
 
-export type VehicleFormValues = Omit<VehicleRecord, "id" | "version" | "updateSequence" | "status" | "updatedAt" | "history" | "auditTrail">;
+export type VehicleFormValues = Omit<VehicleRecord, "id" | "version" | "currentCycle" | "updateSequence" | "status" | "updatedAt" | "history" | "auditTrail">;
 
 export const transitions: Record<string, VehicleStatus> = {
   INBOUND: "在库", MERCHANT_RELEASE: "待放车", CUSTOMER_RELEASE: "待提货",

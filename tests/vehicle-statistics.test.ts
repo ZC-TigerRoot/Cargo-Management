@@ -66,6 +66,22 @@ describe("车辆库存透视统计", () => {
     expect(summary.averageInventoryDays).toBe(41);
   });
 
+  it("再次入库后旧签收和提货不影响本轮库存及账龄，当前轮次签收后正常离库", () => {
+    const returned = record({
+      currentCycle: 2, inboundAt: "2026-10-21",
+      history: [
+        { id: "old-pickup", cycle: 1, type: "PICKUP_CREATED", title: "提货", occurredAt: "2026-10-07", recordedAt: "2026-10-07" },
+        { id: "old-signed", cycle: 1, type: "DRIVER_SIGNED", title: "签收", occurredAt: "2026-10-07", recordedAt: "2026-10-07" },
+      ],
+    });
+    expect(isPhysicalInventory(returned)).toBe(true);
+    expect(vehicleReleaseStage(returned)).toBe("商社未放");
+    expect(summarizeVehicleInventory([returned], new Date("2026-10-23T00:00:00Z"))).toMatchObject({ inventoryCount: 1, averageInventoryDays: 3, pendingPickupCount: 0, signedWithoutOutboundCount: 0, inconsistentReleaseSequenceCount: 0 });
+    const signed = { ...returned, history: [...returned.history!, { id: "new-signed", cycle: 2, type: "DRIVER_SIGNED", title: "签收", occurredAt: "2026-10-23", recordedAt: "2026-10-23" }] };
+    expect(isPhysicalInventory(signed)).toBe(false);
+    expect(vehicleReleaseStage(signed)).toBe("已离库");
+  });
+
   it("默认可生成客户乘放车进度的交叉表及行列总计", () => {
     const inventory = recordsForPivotScope(records, "inventory");
     const pivot = createVehiclePivot(inventory, "customer", "releaseStage", new Date("2026-02-10T00:00:00.000Z"));

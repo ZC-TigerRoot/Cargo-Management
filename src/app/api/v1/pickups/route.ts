@@ -22,7 +22,7 @@ class PickupCreationError extends Error {
 
 function taskData(task: {
   id: string; taskNo: string; token: string; expiresAt: Date; revokedAt: Date | null; submittedAt: Date | null; createdAt: Date;
-  items: { vehicle: { id: string; vin: string | null; model: string | null } }[];
+  items: { cycle: number; vehicle: { id: string; vin: string | null; model: string | null; currentCycle: number } }[];
 }, publicBaseUrl: string, today = chinaToday()) {
   const tokenPath = `/driver/${encodeURIComponent(task.token)}`;
   const expiresAt = fromPrismaDate(task.expiresAt);
@@ -33,12 +33,12 @@ function taskData(task: {
     pickupUrl: buildPickupUrl(publicBaseUrl, task.token),
     expiresAt,
     createdAt: fromPrismaDate(task.createdAt),
-    status: task.revokedAt ? "revoked" : task.submittedAt ? "submitted" : expiresAt < today ? "expired" : "pending",
-    vehicles: task.items.map(item => ({ ...item.vehicle, vin: item.vehicle.vin ?? undefined, model: item.vehicle.model ?? undefined })),
+    status: task.revokedAt ? "revoked" : task.submittedAt ? "submitted" : expiresAt < today ? "expired" : task.items.some(item => item.cycle !== item.vehicle.currentCycle) ? "stale" : "pending",
+    vehicles: task.items.map(item => ({ id: item.vehicle.id, vin: item.vehicle.vin ?? undefined, model: item.vehicle.model ?? undefined })),
   };
 }
 
-const include = { items: { include: { vehicle: { select: { id: true, vin: true, model: true } } } } } as const;
+const include = { items: { include: { vehicle: { select: { id: true, vin: true, model: true, currentCycle: true } } } } } as const;
 
 export async function GET(req: NextRequest) {
   try {
@@ -92,7 +92,7 @@ export async function POST(req: NextRequest) {
       `);
       const vehicles = await tx.vehicle.findMany({
         where: { id: { in: vehicleIds }, ...vehicleScopeWhere(user) },
-        select: { id: true, vin: true, model: true, status: true, version: true },
+        select: { id: true, vin: true, model: true, status: true, version: true, currentCycle: true },
       });
       if (vehicles.length !== vehicleIds.length) {
         throw new PickupCreationError("VEHICLE_NOT_FOUND", "部分车辆不存在，请刷新后重试", 404);
@@ -103,7 +103,10 @@ export async function POST(req: NextRequest) {
         throw new PickupCreationError("VEHICLE_NOT_AVAILABLE", `以下车辆当前不可提货：${labels.join("、")}`, 409);
       }
       const activeItems = await tx.pickupItem.findMany({
-        where: { vehicleId: { in: vehicleIds }, pickupTask: { submittedAt: null, revokedAt: null, expiresAt: { gte: todayDate } } },
+        where: {
+          OR: vehicles.map(vehicle => ({ vehicleId: vehicle.id, cycle: vehicle.currentCycle })),
+          pickupTask: { submittedAt: null, revokedAt: null, expiresAt: { gte: todayDate } },
+        },
         select: { vehicleId: true },
       });
       if (activeItems.length) {
@@ -116,7 +119,7 @@ export async function POST(req: NextRequest) {
           taskNo,
           token,
           expiresAt,
-          items: { create: vehicles.map(vehicle => ({ vehicleId: vehicle.id })) },
+          items: { create: vehicles.map(vehicle => ({ vehicleId: vehicle.id, cycle: vehicle.currentCycle })) },
         },
         include,
       });
@@ -125,6 +128,7 @@ export async function POST(req: NextRequest) {
         await tx.inventoryEvent.create({
           data: {
             vehicleId: vehicle.id,
+            cycle: vehicle.currentCycle,
             type: "PICKUP_CREATED",
             occurredAt: todayDate,
             actorId: user.id,

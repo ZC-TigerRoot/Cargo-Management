@@ -124,6 +124,7 @@ model Vehicle {
   hsCode           String?
   status           VehicleStatus    @default(PENDING_INBOUND)
   version          Int              @default(1)
+  currentCycle     Int              @default(1)
   inboundAt        DateTime?        @db.Date
   inventoryDays    Int?
   inboundAmount    Decimal?         @db.Decimal(18, 2)
@@ -153,6 +154,7 @@ model InventoryEvent {
   id             String       @id @default(cuid())
   vehicleId      String
   vehicle        Vehicle      @relation(fields: [vehicleId], references: [id])
+  cycle          Int          @default(1)
   type           EventType
   occurredAt     DateTime     @db.Date
   payload        Json         @default("{}")
@@ -189,6 +191,7 @@ model SystemSetting {
 model PickupItem {
   pickupTaskId String
   vehicleId    String
+  cycle        Int        @default(1)
   pickupTask   PickupTask @relation(fields: [pickupTaskId], references: [id])
   vehicle      Vehicle    @relation(fields: [vehicleId], references: [id])
 

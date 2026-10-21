@@ -58,7 +58,7 @@ export default function ModulePage({ kind }: { kind: Kind }) {
       <section className="content">
         <div className="module-heading"><div><p className="eyebrow">{m.eyebrow}</p><h2>{m.title}</h2><p>{m.description}</p></div></div>
         {(recordModule || kind === "reports") && loadError && <p className="form-error">{loadError}</p>}
-        {recordModule && <VehicleModule records={scopedRecords} rows={rows} filters={filters} setFilters={setFilters} lockedType={type} canDelete={can(role, "delete")} onDeleted={removeRecord} />}
+        {recordModule && <VehicleModule records={scopedRecords} allRecords={records} rows={rows} filters={filters} setFilters={setFilters} lockedType={type} canDelete={can(role, "delete")} canReentry={can(role, "correct")} onDeleted={removeRecord} onSaved={saveRecord} />}
         {kind === "pickups" && <PickupModule records={records} canCreate={can(role, "create")} />}
         {kind === "imports" && <ImportModule />}
         {kind === "reports" && loading && <article className="panel report-loading">正在读取车辆数据…</article>}
@@ -70,15 +70,15 @@ export default function ModulePage({ kind }: { kind: Kind }) {
   </div>;
 }
 
-function VehicleModule({ records, rows, filters, setFilters, lockedType, canDelete, onDeleted }: { records: VehicleRecord[]; rows: VehicleRecord[]; filters: VehicleFilters; setFilters: (filters: VehicleFilters) => void; lockedType?: BusinessType; canDelete: boolean; onDeleted: (id: string) => void }) {
+function VehicleModule({ records, allRecords, rows, filters, setFilters, lockedType, canDelete, canReentry, onDeleted, onSaved }: { records: VehicleRecord[]; allRecords: VehicleRecord[]; rows: VehicleRecord[]; filters: VehicleFilters; setFilters: (filters: VehicleFilters) => void; lockedType?: BusinessType; canDelete: boolean; canReentry: boolean; onDeleted: (id: string) => void; onSaved: (record: VehicleRecord) => void }) {
   return <article className="panel table-panel module-panel">
     <VehicleFilterBar records={records} filters={filters} onChange={setFilters} lockedType={lockedType}/>
-    <VehicleTable rows={rows} storageKey="cargo.module-vehicle-table" canDelete={canDelete} onDeleted={onDeleted} />
+    <VehicleTable rows={rows} allRows={allRecords} storageKey="cargo.module-vehicle-table" canDelete={canDelete} canReentry={canReentry} onDeleted={onDeleted} onSaved={onSaved} />
   </article>;
 }
 
 type PickupTask = {
-  id: string; taskNo: string; expiresAt: string; createdAt: string; status: "pending" | "submitted" | "expired" | "revoked";
+  id: string; taskNo: string; expiresAt: string; createdAt: string; status: "pending" | "submitted" | "expired" | "revoked" | "stale";
   tokenPath: string; pickupUrl: string;
   vehicles: { id: string; vin?: string; model?: string }[];
 };
@@ -160,7 +160,7 @@ function PickupModule({ records, canCreate }: { records: VehicleRecord[]; canCre
     }
   }
 
-  const statusName = { pending: "进行中", submitted: "已签收", expired: "已过期", revoked: "已撤销" };
+  const statusName = { pending: "进行中", submitted: "已签收", expired: "已过期", revoked: "已撤销", stale: "需重新创建" };
   return <div className="pickup-layout">
     <div className="panel pickup-search-toolbar"><label className="search"><Search/><input type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索任务号、提单号 / PO、车架号、车型、客户或仓库…" aria-label="搜索提货二维码车辆"/></label><span>{query.trim() ? "找到" : "共"} {filteredEligible.length} 辆可生成 · {filteredTasks.length} 个已有任务</span></div>
     <article className="panel pickup-create"><h3>{canCreate ? "创建提货二维码" : "查看提货二维码"}</h3>{canCreate && <form onSubmit={createTask}><div className="pickup-vehicles">{filteredEligible.map(vehicle => <label key={vehicle.id}><input type="checkbox" checked={selected.includes(vehicle.id)} onChange={event => setSelected(current => event.target.checked ? [...current, vehicle.id] : current.filter(id => id !== vehicle.id))}/><span><b>{vehicle.model || "未填写车型"}</b><small>{vehicle.referenceNo || "未填写提单号 / PO"} · {vehicle.vin || "未填写车架号"}<br/>{vehicle.customer || "未填写客户"} · {vehicle.warehouse || "未填写仓库"}</small></span></label>)}{!filteredEligible.length && <p className="muted">{query.trim() ? "没有找到可生成二维码的车辆" : "暂无可创建提货任务的车辆"}</p>}</div><label className="expiry-field">二维码有效期<input type="date" value={expiresAt} onChange={event => setExpiresAt(event.target.value)} required/></label><button className="primary-button" disabled={loading || !selected.length}>{loading ? "创建中…" : `生成提货二维码${selected.length ? `（已选 ${selected.length} 辆）` : ""}`}</button></form>}{pickupQr ? <div className="qr-result"><b>{pickupQr.taskNo}</b><Image src={pickupQr.qr} width={180} height={180} unoptimized alt="司机提货二维码"/><div className="qr-actions"><a href={pickupQr.url} target="_blank" rel="noreferrer">打开签收页</a><a href={pickupQr.qr} download={`${pickupQr.taskNo}-二维码.png`}>下载二维码</a></div><p>{pickupQr.url}</p><small>此二维码可随时从右侧任务中重新查看。</small></div> : !canCreate && <p className="muted">请从右侧任务中选择“查看二维码”。</p>}{error && <p className="form-error">{error}</p>}</article>
@@ -169,7 +169,7 @@ function PickupModule({ records, canCreate }: { records: VehicleRecord[]; canCre
         const referenceNo = recordById.get(vehicle.id)?.referenceNo;
         return referenceNo ? [referenceNo] : [];
       }))];
-      return <article className="panel action-card" key={task.id}><span>{statusName[task.status]}</span><h3>{task.taskNo}</h3><p>{task.vehicles.map(vehicle => vehicle.model || "未填写车型").join("、")}</p><small>{references.length ? <>单号 {references.join(" · ")}<br/></> : null}{task.vehicles.map(vehicle => vehicle.vin ? `···${vehicle.vin.slice(-6)}` : "未填写车架号").join(" · ")}<br/>有效至 {formatCalendarDate(task.expiresAt)}</small><button type="button" className="task-qr-button" onClick={() => showTaskQr(task)}>查看二维码</button>{task.status === "pending" && canCreate && <button type="button" className="task-qr-button" onClick={() => revokeTask(task)}>撤销二维码</button>}</article>;
+      return <article className="panel action-card" key={task.id}><span>{statusName[task.status]}</span><h3>{task.taskNo}</h3><p>{task.vehicles.map(vehicle => vehicle.model || "未填写车型").join("、")}</p><small>{references.length ? <>单号 {references.join(" · ")}<br/></> : null}{task.vehicles.map(vehicle => vehicle.vin ? `···${vehicle.vin.slice(-6)}` : "未填写车架号").join(" · ")}<br/>有效至 {formatCalendarDate(task.expiresAt)}</small>{task.status === "stale" ? <p className="muted">部分车辆已再次入库，请撤销后重新创建提货任务。</p> : <button type="button" className="task-qr-button" onClick={() => showTaskQr(task)}>查看二维码</button>}{["pending", "stale"].includes(task.status) && canCreate && <button type="button" className="task-qr-button" onClick={() => revokeTask(task)}>撤销二维码</button>}</article>;
     })}{!filteredTasks.length && !error && <p className="muted">{query.trim() ? "没有找到已有二维码任务" : "暂无提货任务"}</p>}</div>
   </div>;
 }

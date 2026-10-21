@@ -1,4 +1,4 @@
-import type { EventType, Prisma, VehicleStatus as PrismaVehicleStatus } from "@prisma/client";
+import { Prisma, type EventType, type VehicleStatus as PrismaVehicleStatus } from "@prisma/client";
 import type { VehicleAuditRecord, VehicleEventRecord, VehicleRecord } from "./domain";
 import { CHINA_TIME_ZONE, chinaToday, fromPrismaDate, normalizeCalendarDate, toPrismaDate } from "./datetime";
 import { prisma } from "./prisma";
@@ -33,6 +33,12 @@ export class VersionConflictError extends Error {
   }
 }
 
+export class VehicleReentryError extends Error {
+  constructor(public code: string, message: string, public status: number) {
+    super(message);
+  }
+}
+
 export function businessBatchSnapshot(batch: {
   id: string;
   type: string;
@@ -63,12 +69,15 @@ export function businessBatchSnapshot(batch: {
 }
 
 function isTransactionConflict(error: unknown) {
-  return Boolean(error && typeof error === "object" && "code" in error && error.code === "P2034");
+  if (!error || typeof error !== "object" || !("code" in error)) return false;
+  if (error.code === "P2034") return true;
+  if (error.code !== "P2010" || !("meta" in error) || !error.meta || typeof error.meta !== "object") return false;
+  return "code" in error.meta && ["40001", "40P01"].includes(String(error.meta.code));
 }
 
-async function serializableTransaction<T>(callback: (tx: Prisma.TransactionClient) => Promise<T>) {
+async function serializableTransaction<T>(callback: (tx: Prisma.TransactionClient) => Promise<T>, options?: { timeout: number }) {
   try {
-    return await prisma.$transaction(callback, { isolationLevel: "Serializable" });
+    return await prisma.$transaction(callback, { isolationLevel: "Serializable", ...options });
   } catch (error) {
     if (isTransactionConflict(error)) throw new VersionConflictError();
     throw error;
@@ -120,6 +129,7 @@ function effectiveEventAt(vehicle: VehicleWithRelations, field: keyof typeof eve
   const type = eventFieldMap[field];
   let value: string | undefined;
   for (const event of vehicle.events) {
+    if ((event.cycle ?? 1) !== (vehicle.currentCycle ?? 1)) continue;
     if (event.type === type) value = fromPrismaDate(event.occurredAt);
     if (event.type === "CORRECTION") {
       const payload = eventPayload(event);
@@ -138,8 +148,10 @@ function eventHistory(vehicle: VehicleWithRelations): VehicleEventRecord[] {
     const cleared = event.type === "CORRECTION" && payload.value === null && correctedType;
     return {
       id: event.id,
+      cycle: event.cycle ?? 1,
       type: event.type,
-      title: cleared ? `撤销：${eventTitles[correctedType]}` : eventTitles[event.type],
+      title: payload.source === "reentry" && event.type === "INBOUND" ? "车辆再次入库"
+        : cleared ? `撤销：${eventTitles[correctedType]}` : eventTitles[event.type],
       occurredAt: fromPrismaDate(event.occurredAt),
       recordedAt: fromPrismaDate(event.createdAt),
       actor: event.actor?.name ?? (typeof payload.actorLabel === "string" ? payload.actorLabel : undefined),
@@ -163,6 +175,7 @@ export function toVehicleRecord(vehicle: VehicleWithRelations): VehicleRecord {
   return {
     id: vehicle.id,
     version: vehicle.version,
+    currentCycle: vehicle.currentCycle ?? 1,
     updateSequence: vehicle.updateSequence.toString(),
     vin: vehicle.vin ?? undefined,
     model: vehicle.model ?? undefined,
@@ -243,9 +256,10 @@ const autoStatusRank: Record<PrismaVehicleStatus, number> = {
 // date fields do not necessarily reflect it; a created pickup task keeps the
 // vehicle at least at PENDING_PICKUP.
 function expectedAutoStatus(vehicle: VehicleWithRelations, data: StatusInferenceFields): PrismaVehicleStatus {
-  if (vehicle.events.some(event => event.type === "DRIVER_SIGNED")) return "COMPLETED";
+  const events = vehicle.events.filter(event => (event.cycle ?? 1) === (vehicle.currentCycle ?? 1));
+  if (events.some(event => event.type === "DRIVER_SIGNED")) return "COMPLETED";
   const inferred = prismaStatus(data);
-  if (vehicle.events.some(event => event.type === "PICKUP_CREATED") && autoStatusRank[inferred] < autoStatusRank.PENDING_PICKUP) {
+  if (events.some(event => event.type === "PICKUP_CREATED") && autoStatusRank[inferred] < autoStatusRank.PENDING_PICKUP) {
     return "PENDING_PICKUP";
   }
   return inferred;
@@ -433,11 +447,12 @@ async function appendDateCorrections(
         : effectiveEventAt(existing, field);
     const next = data[field];
     if (sameDate(previous, next)) continue;
-    const corrected = [...existing.events].reverse().find(event => event.type === type);
+    const corrected = [...existing.events].reverse().find(event => event.type === type && (event.cycle ?? 1) === (existing.currentCycle ?? 1));
     if (next) {
       await tx.inventoryEvent.create({
         data: {
           vehicleId: existing.id,
+          cycle: existing.currentCycle ?? 1,
           type,
           occurredAt: toPrismaDate(next),
           correctionOfId: corrected?.id,
@@ -449,6 +464,7 @@ async function appendDateCorrections(
       await tx.inventoryEvent.create({
         data: {
           vehicleId: existing.id,
+          cycle: existing.currentCycle ?? 1,
           type: "CORRECTION",
           occurredAt: operationDate,
           correctionOfId: corrected?.id,
@@ -505,6 +521,7 @@ async function persistVehicleUpdate(
       await tx.inventoryEvent.create({
         data: {
           vehicleId: id,
+          cycle: existing.currentCycle ?? 1,
           type: nextStatus === "EXCEPTION" ? "EXCEPTION" : "CORRECTION",
           occurredAt: operationDate,
           actorId: context.actorId,
@@ -547,6 +564,94 @@ export async function updateVehicleFromImport(
   expectedDestinationBatchSnapshot?: string | null,
 ) {
   return persistVehicleUpdate(id, expectedVersion, data, context, true, expectedDestinationBatchSnapshot);
+}
+
+export async function reenterVehicles(
+  input: { vehicles: { id: string; version: number }[]; inboundAt: string; reason: string },
+  context: MutationContext = {},
+  scope: Prisma.VehicleWhereInput = {},
+): Promise<VehicleWithRelations[]> {
+  const ids = input.vehicles.map(vehicle => vehicle.id);
+  if (!ids.length || ids.length > 500 || new Set(ids).size !== ids.length) {
+    throw new VehicleReentryError("INVALID_SELECTION", "请选择 1 至 500 台不重复的车辆", 422);
+  }
+  const today = chinaToday();
+  if (input.inboundAt > today) {
+    throw new VehicleReentryError("INVALID_INBOUND_DATE", "再次入库日期不能晚于今天", 422);
+  }
+  const inboundAt = toPrismaDate(input.inboundAt);
+  return serializableTransaction(async tx => {
+    // Use the same lock order as pickup creation. A stale driver submission
+    // must finish first or fail its cycle/version check after this transaction.
+    await tx.$queryRaw(Prisma.sql`
+      SELECT "id" FROM "Vehicle"
+      WHERE "id" IN (${Prisma.join(ids)})
+      ORDER BY "id" FOR UPDATE
+    `);
+    const vehicles = await tx.vehicle.findMany({
+      where: { AND: [{ id: { in: ids } }, scope] },
+      include: vehicleInclude,
+    });
+    if (vehicles.length !== ids.length) {
+      throw new VehicleReentryError("VEHICLE_NOT_ACCESSIBLE", "部分车辆不存在或不在当前账号的仓库权限范围内", 403);
+    }
+    const expected = new Map(input.vehicles.map(vehicle => [vehicle.id, vehicle.version]));
+    for (const vehicle of vehicles) {
+      if (vehicle.version !== expected.get(vehicle.id)) throw new VersionConflictError();
+      if (!["OUTBOUND", "PENDING_RECEIPT", "COMPLETED"].includes(vehicle.status)) {
+        throw new VehicleReentryError("VEHICLE_NOT_AVAILABLE", `车辆 ${vehicle.vin || vehicle.id} 当前不可再次入库，仅支持已出库、待签收或已完成的车辆`, 409);
+      }
+      const signedDates = vehicle.events
+        .filter(event => event.type === "DRIVER_SIGNED" && (event.cycle ?? 1) === (vehicle.currentCycle ?? 1))
+        .map(event => event.occurredAt);
+      const previousDates = [vehicle.inboundAt, vehicle.outboundAt, ...signedDates].filter((date): date is Date => Boolean(date));
+      if (previousDates.some(date => fromPrismaDate(date) > input.inboundAt)) {
+        throw new VehicleReentryError("INVALID_INBOUND_DATE", `车辆 ${vehicle.vin || vehicle.id} 的再次入库日期不能早于上一轮入库、实际出库或司机签收日期`, 422);
+      }
+    }
+
+    const before = new Map(vehicles.map(vehicle => [vehicle.id, auditSnapshot(toVehicleRecord(vehicle))]));
+    for (const vehicle of [...vehicles].sort((left, right) => left.id.localeCompare(right.id))) {
+      const changed = await tx.vehicle.updateMany({
+        where: { id: vehicle.id, version: vehicle.version, currentCycle: vehicle.currentCycle ?? 1 },
+        data: {
+          currentCycle: { increment: 1 },
+          inboundAt,
+          outboundAt: null,
+          inventoryDays: null,
+          pickupDetails: null,
+          status: "IN_STOCK",
+          version: { increment: 1 },
+        },
+      });
+      if (changed.count !== 1) throw new VersionConflictError();
+    }
+    await tx.inventoryEvent.createMany({
+      data: vehicles.map(vehicle => ({
+        vehicleId: vehicle.id,
+        cycle: (vehicle.currentCycle ?? 1) + 1,
+        type: "INBOUND",
+        occurredAt: inboundAt,
+        actorId: context.actorId,
+        payload: { source: "reentry", previousCycle: vehicle.currentCycle ?? 1, reason: input.reason },
+      })),
+    });
+    const updated = await tx.vehicle.findMany({ where: { id: { in: ids } }, include: vehicleInclude });
+    await tx.auditLog.createMany({
+      data: updated.map(vehicle => ({
+        actorId: context.actorId,
+        action: "VEHICLE_REENTERED",
+        entityType: "Vehicle",
+        entityId: vehicle.id,
+        before: before.get(vehicle.id),
+        after: auditSnapshot(toVehicleRecord(vehicle)),
+        reason: input.reason,
+        ip: context.ip,
+      })),
+    });
+    const byId = new Map(updated.map(vehicle => [vehicle.id, vehicle]));
+    return ids.map(id => byId.get(id)!);
+  }, { timeout: 30_000 });
 }
 
 async function deleteVehiclesInTransaction(tx: Prisma.TransactionClient, ids: string[], context: MutationContext) {
@@ -654,6 +759,7 @@ const auditFieldLabels: Record<string, string> = {
   warehouse: "仓库",
   customer: "所属客户",
   status: "车辆状态",
+  currentCycle: "入库轮次",
   inboundAt: "入库日期",
   inventoryDays: "库存时间",
   inboundAmount: "入库金额",
@@ -700,6 +806,7 @@ export async function listVehicleAuditTrail(vehicleId: string): Promise<VehicleA
     return {
       id: audit.id,
       action: audit.action === "VEHICLE_CREATED" ? "创建车辆档案"
+        : audit.action === "VEHICLE_REENTERED" ? "车辆再次入库"
         : audit.action === "PICKUP_CREATED" ? "创建提货任务并更新状态"
           : audit.action === "PICKUP_SIGNED" ? "司机签收并更新状态"
             : "修改车辆数据",

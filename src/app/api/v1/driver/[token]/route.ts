@@ -12,6 +12,8 @@ export const runtime = "nodejs";
 
 const receiptNo = (taskNo: string) => taskNo.replace(/^PU-/, "RC-");
 
+class DriverSubmissionConflict extends Error {}
+
 function jsonObject(value: Prisma.JsonValue | null) {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, Prisma.JsonValue> : {};
 }
@@ -28,7 +30,7 @@ function submittedDriver(value: Prisma.JsonValue | null) {
 async function findTask(token: string) {
   return prisma.pickupTask.findUnique({
     where: { token },
-    include: { items: { include: { vehicle: { select: { id: true, vin: true, model: true, status: true, version: true } } } } },
+    include: { items: { include: { vehicle: { select: { id: true, vin: true, model: true, status: true, version: true, currentCycle: true } } } } },
   });
 }
 
@@ -36,6 +38,9 @@ function taskError(task: Awaited<ReturnType<typeof findTask>>, today = chinaToda
   if (!task) return NextResponse.json({ error: "TASK_NOT_FOUND", message: "提货任务不存在" }, { status: 404 });
   if (task.revokedAt) return NextResponse.json({ error: "TASK_REVOKED", message: "该提货链接已撤销" }, { status: 410 });
   if (fromPrismaDate(task.expiresAt) < today) return NextResponse.json({ error: "TASK_EXPIRED", message: "该提货链接已过期" }, { status: 410 });
+  if (!task.submittedAt && task.items.some(item => item.cycle !== item.vehicle.currentCycle)) {
+    return NextResponse.json({ error: "TASK_CYCLE_CHANGED", message: "部分车辆已再次入库，请联系仓库重新创建提货任务" }, { status: 409 });
+  }
 }
 
 export async function GET(_: NextRequest, { params }: { params: Promise<{ token: string }> }) {
@@ -50,6 +55,7 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ token:
       status: task!.submittedAt ? "submitted" : "pending",
       submittedAt: task!.submittedAt ? fromPrismaDate(task!.submittedAt) : undefined,
       receiptNo: task!.submittedAt ? receiptNo(task!.taskNo) : undefined,
+      ...(task!.submittedAt ? submittedDriver(task!.driverSubmission) : {}),
       vehicles: task!.items.map(item => ({ id: item.vehicle.id, vin: item.vehicle.vin?.slice(-6), model: item.vehicle.model ?? undefined })),
     } });
   } catch (error) {
@@ -118,11 +124,18 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
         data: { submittedAt, driverSubmission: submission },
       });
       if (claimed.count !== 1) return false;
-      for (const item of task!.items) {
-        await tx.vehicle.update({ where: { id: item.vehicle.id }, data: { status: "COMPLETED", version: { increment: 1 } } });
+      for (const item of [...task!.items].sort((left, right) => left.vehicle.id.localeCompare(right.vehicle.id))) {
+        const updated = await tx.vehicle.updateMany({
+          where: { id: item.vehicle.id, currentCycle: item.cycle, version: item.vehicle.version },
+          data: { status: "COMPLETED", version: { increment: 1 } },
+        });
+        if (updated.count !== 1) {
+          throw new DriverSubmissionConflict("车辆记录或入库轮次已变化，请刷新后重试；已再次入库的车辆需重新创建提货任务");
+        }
         const signedEvent = await tx.inventoryEvent.create({
           data: {
             vehicleId: item.vehicle.id,
+            cycle: item.cycle,
             type: "DRIVER_SIGNED",
             occurredAt: submittedAt,
             idempotencyKey: `${parsed.data.idempotencyKey}:${item.vehicle.id}`,
@@ -182,6 +195,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
     uploadCommitted = true;
     return NextResponse.json({ data: { status: "submitted", receiptNo: receiptNo(task!.taskNo), submittedAt: fromPrismaDate(submittedAt), driverName: parsed.data.driverName, driverPhone: parsed.data.driverPhone } }, { status: 201 });
   } catch (error) {
+    if (error instanceof DriverSubmissionConflict) {
+      return NextResponse.json({ error: "SUBMISSION_CONFLICT", message: error.message }, { status: 409 });
+    }
     if (error instanceof Error && error.message === "IMAGE_TOO_LARGE") {
       return NextResponse.json({ error: "PAYLOAD_TOO_LARGE", message: "车辆照片不能超过 5 MB" }, { status: 413 });
     }

@@ -2,9 +2,10 @@
 
 import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from "react";
 import Link from "next/link";
-import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, GripVertical, SlidersHorizontal, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, GripVertical, RotateCcw, SlidersHorizontal, Trash2 } from "lucide-react";
 import { vehicleInventoryDays, type VehicleRecord } from "@/lib/domain";
 import { formatCalendarDate } from "@/lib/datetime";
+import VehicleReentryModal from "./vehicle-reentry-modal";
 
 type Column = {
   id: string;
@@ -50,7 +51,7 @@ function validPreferences(value: unknown): value is Preferences {
     (data.direction === "asc" || data.direction === "desc");
 }
 
-export default function VehicleTable({ rows, storageKey = "cargo.vehicle-table", canDelete = false, onDeleted }: { rows: VehicleRecord[]; storageKey?: string; canDelete?: boolean; onDeleted?: (id: string) => void }) {
+export default function VehicleTable({ rows, allRows = rows, storageKey = "cargo.vehicle-table", canDelete = false, canReentry = false, onDeleted, onSaved }: { rows: VehicleRecord[]; allRows?: VehicleRecord[]; storageKey?: string; canDelete?: boolean; canReentry?: boolean; onDeleted?: (id: string) => void; onSaved?: (record: VehicleRecord) => void }) {
   const [order, setOrder] = useState(defaultOrder);
   const [visible, setVisible] = useState(defaultVisible);
   const [sort, setSort] = useState("updatedAt");
@@ -64,7 +65,10 @@ export default function VehicleTable({ rows, storageKey = "cargo.vehicle-table",
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
+  const [reentryOpen, setReentryOpen] = useState(false);
+  const [reentryMessage, setReentryMessage] = useState("");
   const selectAllRef = useRef<HTMLInputElement>(null);
+  const canSelect = canDelete || canReentry;
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
@@ -118,6 +122,7 @@ export default function VehicleTable({ rows, storageKey = "cargo.vehicle-table",
   const pageRows = sorted.slice(pageStart, pageStart + pageSize);
   const sortedIds = useMemo(() => new Set(sorted.map(vehicle => vehicle.id)), [sorted]);
   const selectedVisibleIds = selectedIds.filter(id => sortedIds.has(id));
+  const selectedAvailableIds = selectedIds.filter(id => allRows.some(record => record.id === id));
   const selectedPageIds = pageRows.map(vehicle => vehicle.id).filter(id => selectedIds.includes(id));
   const allVisibleSelected = pageRows.length > 0 && selectedPageIds.length === pageRows.length;
 
@@ -242,8 +247,9 @@ export default function VehicleTable({ rows, storageKey = "cargo.vehicle-table",
 
   return <>
     {deleteError && <p className="form-error table-error" role="alert">{deleteError}</p>}
+    {reentryMessage && <p className="form-success table-feedback" role="status">{reentryMessage}</p>}
     <div className="column-toolbar">
-      {canDelete && <div className="bulk-actions"><span>已选 {selectedVisibleIds.length} 条</span><button type="button" disabled={!selectedVisibleIds.length || bulkDeleting || Boolean(deletingId)} onClick={removeSelected}><Trash2 />{bulkDeleting ? "删除中…" : "批量删除"}</button></div>}
+      {canSelect && <div className="bulk-actions"><span>已选 {selectedAvailableIds.length} 条</span>{canReentry && <button type="button" className="bulk-reentry" disabled={bulkDeleting || Boolean(deletingId)} onClick={() => { setReentryMessage(""); setReentryOpen(true); }}><RotateCcw />批量再次入库</button>}{canDelete && <button type="button" disabled={!selectedVisibleIds.length || bulkDeleting || Boolean(deletingId)} onClick={removeSelected}><Trash2 />{bulkDeleting ? "删除中…" : `批量删除（${selectedVisibleIds.length}）`}</button>}</div>}
       <label><ArrowUpDown />排序<select value={sort} onChange={event => { setSort(event.target.value); setPage(1); }}>{columns.map(column => <option value={column.id} key={column.id}>{column.label}</option>)}</select></label>
       <button type="button" onClick={() => { setDirection(current => current === "asc" ? "desc" : "asc"); setPage(1); }}>{direction === "asc" ? <ArrowUp /> : <ArrowDown />}{direction === "asc" ? "升序" : "降序"}</button>
       <details><summary><SlidersHorizontal />显示与排列属性</summary><div className="column-picker">{order.map(id => {
@@ -253,7 +259,7 @@ export default function VehicleTable({ rows, storageKey = "cargo.vehicle-table",
         return <div key={id} className={`column-picker-item${draggingId === id ? " is-dragging" : ""}${dropClass}`} onDragOver={event => dragOverColumn(event, id)} onDrop={event => dropColumn(event, id)}><label><input type="checkbox" checked={checked} onChange={event => setVisible(current => event.target.checked ? [...current, id] : current.length > 1 ? current.filter(item => item !== id) : current)} />{column.label}</label><button type="button" className="column-drag-handle" draggable onDragStart={event => startColumnDrag(event, id)} onDragEnd={() => { setDraggingId(""); setDropTarget(undefined); }} onKeyDown={event => handleDragKey(event, id)} aria-label={`拖动排列${column.label}`} title="按住并上下拖动调整顺序"><GripVertical /></button></div>;
       })}<button type="button" className="reset-columns" onClick={reset}>恢复默认</button></div></details>
     </div>
-    <div className="table-wrap"><table><thead><tr>{canDelete && <th className="row-select"><input ref={selectAllRef} type="checkbox" checked={allVisibleSelected} disabled={!pageRows.length || bulkDeleting} onChange={event => toggleAllVisible(event.target.checked)} aria-label="全选当前页" /></th>}{visibleColumns.map(column => <th key={column.id}>{column.label}</th>)}<th></th></tr></thead><tbody>{pageRows.map(vehicle => <tr key={vehicle.id} className={selectedIds.includes(vehicle.id) ? "selected-row" : undefined}>{canDelete && <td className="row-select"><input type="checkbox" checked={selectedIds.includes(vehicle.id)} disabled={bulkDeleting || deletingId === vehicle.id} onChange={event => setSelectedIds(current => event.target.checked ? [...current, vehicle.id] : current.filter(id => id !== vehicle.id))} aria-label={`选择${vehicle.vin || vehicle.model || "未命名单据"}`} /></td>}{visibleColumns.map(column => <td key={column.id}>{column.render ? column.render(vehicle) : column.value(vehicle) ?? "—"}</td>)}<td><div className="vehicle-row-actions"><Link href={`/vehicles/${vehicle.id}`}>查看 →</Link>{canDelete && <button type="button" className="vehicle-delete" disabled={bulkDeleting || deletingId === vehicle.id} onClick={() => remove(vehicle)} title="删除车辆"><Trash2 />{deletingId === vehicle.id ? "删除中" : "删除"}</button>}</div></td></tr>)}</tbody></table>{!sorted.length && <div className="empty">暂无符合条件的车辆</div>}</div>
+    <div className="table-wrap"><table><thead><tr>{canSelect && <th className="row-select"><input ref={selectAllRef} type="checkbox" checked={allVisibleSelected} disabled={!pageRows.length || bulkDeleting} onChange={event => toggleAllVisible(event.target.checked)} aria-label="全选当前页" /></th>}{visibleColumns.map(column => <th key={column.id}>{column.label}</th>)}<th></th></tr></thead><tbody>{pageRows.map(vehicle => <tr key={vehicle.id} className={selectedIds.includes(vehicle.id) ? "selected-row" : undefined}>{canSelect && <td className="row-select"><input type="checkbox" checked={selectedIds.includes(vehicle.id)} disabled={bulkDeleting || deletingId === vehicle.id} onChange={event => setSelectedIds(current => event.target.checked ? [...current, vehicle.id] : current.filter(id => id !== vehicle.id))} aria-label={`选择${vehicle.vin || vehicle.model || "未命名单据"}`} /></td>}{visibleColumns.map(column => <td key={column.id}>{column.render ? column.render(vehicle) : column.value(vehicle) ?? "—"}</td>)}<td><div className="vehicle-row-actions"><Link href={`/vehicles/${vehicle.id}`}>查看 →</Link>{canDelete && <button type="button" className="vehicle-delete" disabled={bulkDeleting || deletingId === vehicle.id} onClick={() => remove(vehicle)} title="删除车辆"><Trash2 />{deletingId === vehicle.id ? "删除中" : "删除"}</button>}</div></td></tr>)}</tbody></table>{!sorted.length && <div className="empty">暂无符合条件的车辆</div>}</div>
     {sorted.length > 0 && <nav className="table-pagination" aria-label="车辆列表分页">
       <span>显示第 {pageStart + 1}–{Math.min(pageStart + pageSize, sorted.length)} 条，共 {sorted.length} 条</span>
       <label>每页<select value={pageSize} onChange={event => { setPageSize(Number(event.target.value)); setPage(1); }}>{pageSizeOptions.map(option => <option value={option} key={option}>{option}</option>)}</select>条</label>
@@ -265,5 +271,12 @@ export default function VehicleTable({ rows, storageKey = "cargo.vehicle-table",
         <button type="button" disabled={currentPage === totalPages} onClick={() => setPage(totalPages)} aria-label="最后一页"><ChevronsRight /></button>
       </div>
     </nav>}
+    {reentryOpen && <VehicleReentryModal records={allRows} selectedIds={selectedAvailableIds} onClose={() => setReentryOpen(false)} onSaved={saved => {
+      saved.forEach(record => onSaved?.(record));
+      const savedIds = new Set(saved.map(record => record.id));
+      setSelectedIds(current => current.filter(id => !savedIds.has(id)));
+      setReentryOpen(false);
+      setReentryMessage(`已完成 ${saved.length} 台车辆再次入库，状态已改为在库。`);
+    }} />}
   </>;
 }

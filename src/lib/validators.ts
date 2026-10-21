@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { vehicleStatuses } from "./domain";
-import { CHINA_TIME_ZONE } from "./datetime";
+import { CHINA_TIME_ZONE, chinaToday } from "./datetime";
 
 const optionalText = z.string().trim().max(2_000, "文本内容不能超过 2000 个字符").optional().transform(value => value || undefined);
 const optionalLongText = z.string().trim().max(5_000, "文本内容不能超过 5000 个字符").optional().transform(value => value || undefined);
@@ -77,6 +77,23 @@ export const vehicleUpdateInput = vehiclePayload.and(z.object({
 })).superRefine((data, ctx) => {
   if (data.status && !data.statusReason) {
     ctx.addIssue({ code: "custom", path: ["statusReason"], message: "状态变更必须填写原因" });
+  }
+});
+
+export const vehicleReentryInput = z.object({
+  vehicles: z.array(z.object({
+    id: z.string().trim().min(1).max(128),
+    version: z.number().int().positive(),
+  })).min(1, "请至少选择一辆车").max(500, "每次最多处理 500 辆车"),
+  inboundAt: z.iso.date().refine(value => value <= chinaToday(), "再次入库日期不能晚于今天"),
+  reason: z.string().trim().min(1, "请填写再次入库原因").max(2_000, "再次入库原因不能超过 2000 个字符"),
+}).superRefine((data, ctx) => {
+  const ids = new Set<string>();
+  for (const [index, vehicle] of data.vehicles.entries()) {
+    if (ids.has(vehicle.id)) {
+      ctx.addIssue({ code: "custom", path: ["vehicles", index, "id"], message: "同一辆车不能重复选择" });
+    }
+    ids.add(vehicle.id);
   }
 });
 

@@ -55,7 +55,7 @@ function distinctVehicles(records: readonly VehicleRecord[]) {
 }
 
 function hasEvent(vehicle: VehicleRecord, type: string) {
-  return vehicle.history?.some(event => event.type === type) ?? false;
+  return vehicle.history?.some(event => event.type === type && (event.cycle ?? 1) === (vehicle.currentCycle ?? 1)) ?? false;
 }
 
 export function isPhysicalInventory(vehicle: VehicleRecord) {

@@ -78,6 +78,54 @@
 .settings-form input { display: block; width: 100%; height: 43px; margin-top: 6px; padding: 0 11px; border: 1px solid var(--line); border-radius: 8px; outline: none; }
 .settings-form input:focus { border-color: #32745d; box-shadow: 0 0 0 3px #32745d15; }
 .form-success { color: #176348 !important; }
+.bulk-actions { flex-wrap: wrap; }
+.bulk-actions>button.bulk-reentry { color: var(--green); border-color: #b7d1c3; }
+.table-feedback { margin: 0 20px 12px; font-size: 12px; }
+.reentry-modal { border-radius: 8px; }
+.reentry-modal form { min-width: 0; }
+.reentry-source { margin: 0 0 16px; padding: 0; border: 0; min-width: 0; }
+.reentry-source legend { margin-bottom: 8px; color: #58635d; font-size: 12px; font-weight: 700; }
+.reentry-source-tabs { display: flex; width: fit-content; max-width: 100%; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+.reentry-source-tabs button { min-height: 36px; padding: 0 14px; background: #fff; border: 0; color: #58635d; font-size: 12px; cursor: pointer; }
+.reentry-source-tabs button+button { border-left: 1px solid var(--line); }
+.reentry-source-tabs button[aria-selected=true] { background: #eaf3ee; color: var(--green); font-weight: 700; }
+.reentry-vin-source { display: flex; align-items: end; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+.reentry-vin-label { flex: 1 1 320px; min-width: 0; font-size: 11px; font-weight: 700; color: #58635d; }
+.reentry-vin-label textarea { display: block; width: 100%; max-height: 220px; margin-top: 6px; padding: 10px; border: 1px solid var(--line); border-radius: 7px; resize: vertical; font: 12px monospace; }
+.reentry-file { position: relative; overflow: hidden; }
+.reentry-file input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+.reentry-file-name { display: flex; flex: 1 1 100%; gap: 6px; margin: 0; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.reentry-file-name svg { flex: none; width: 15px; height: 15px; }
+.reentry-fields { margin: 0 0 18px; }
+.reentry-fields>label { min-width: 0; }
+.reentry-fields input { min-width: 0; }
+.reentry-preview-head { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-bottom: 10px; }
+.reentry-preview-head h3 { margin: 0; font-size: 14px; }
+.reentry-preview-head h3 span { font-size: 11px; color: var(--muted); font-weight: 400; margin-left: 5px; }
+.reentry-preview-head>span { font-size: 11px; }
+.reentry-preview { max-height: 300px; border: 1px solid var(--line); border-radius: 7px; }
+.reentry-preview table { width: 100%; min-width: 640px; }
+.reentry-preview th { position: sticky; top: 0; z-index: 1; background: #f5f7f4; }
+.reentry-preview th,.reentry-preview td { padding: 10px 12px; font-size: 11px; }
+.reentry-preview td:last-child { white-space: normal; max-width: 250px; }
+.reentry-preview td small { overflow-wrap: anywhere; }
+.reentry-issues { color: #b34338; }
+.reentry-valid { color: #216347; }
+.reentry-remove { display: grid; place-items: center; width: 28px; height: 28px; padding: 0; background: #fff; border: 1px solid var(--line); border-radius: 5px; cursor: pointer; }
+.reentry-remove svg { width: 14px; height: 14px; }
+.reentry-summary { display: flex; align-items: start; gap: 9px; margin: 15px 0; padding: 12px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.reentry-summary>svg { flex: none; width: 17px; height: 17px; color: #267253; }
+.reentry-summary p { margin: 0; color: #58635d; font-size: 11px; line-height: 1.7; }
+.timeline-cycle { margin: 0 0 5px; color: #7a847e; font-size: 10px; font-weight: 700; }
+.timeline-cycle.current-cycle { color: var(--green); }
+@media (max-width: 760px) {
+  .bulk-actions { flex: 1 1 100%; }
+  .reentry-modal .modal-actions { flex-wrap: wrap; }
+  .reentry-modal .modal-actions .primary-button { flex: 1; }
+  .reentry-source-tabs button { padding: 0 10px; }
+  .reentry-preview-head { align-items: start; }
+  .reentry-fields { grid-template-columns: 1fr; }
+}
 
 .vehicle-filter-bar { padding: 0 20px 13px; }
 .vehicle-filter-primary { display: flex; align-items: end; gap: 9px; flex-wrap: wrap; }
