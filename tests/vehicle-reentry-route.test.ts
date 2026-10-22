@@ -84,6 +84,42 @@ describe("批量再次入库 API", () => {
     expect(await response.json()).toEqual({ data: [{ id: "vehicle-1", status: "在库" }, { id: "vehicle-2", status: "在库" }], meta: { total: 2 } });
   });
 
+  it("逐车传递去除首尾空白的新备注，并在响应中返回更新后的备注", async () => {
+    const vehicles = [
+      { ...payload.vehicles[0], notes: "第一车新备注" },
+      { ...payload.vehicles[1], notes: "第二车新备注" },
+    ];
+    repository.reenterVehicles.mockResolvedValueOnce(vehicles);
+
+    const response = await POST(request({
+      ...payload, vehicles: [{ ...vehicles[0], notes: "  第一车新备注 \n" }, vehicles[1]],
+    }));
+
+    expect(response.status).toBe(200);
+    expect(repository.reenterVehicles).toHaveBeenCalledExactlyOnceWith({ ...payload, vehicles }, { actorId: "user-1", ip: "203.0.113.8" }, scope);
+    expect(await response.json()).toEqual({ data: vehicles.map(vehicle => ({ ...vehicle, status: "在库" })), meta: { total: 2 } });
+  });
+
+  it("空白备注按未提供处理，已有不带备注的请求仍可提交", async () => {
+    const response = await POST(request({
+      ...payload, vehicles: [{ ...payload.vehicles[0], notes: " \n \t " }, payload.vehicles[1]],
+    }));
+
+    expect(response.status).toBe(200);
+    expect(repository.reenterVehicles).toHaveBeenCalledExactlyOnceWith({
+      ...payload, vehicles: [{ ...payload.vehicles[0], notes: undefined }, payload.vehicles[1]],
+    }, { actorId: "user-1", ip: "203.0.113.8" }, scope);
+  });
+
+  it("允许备注长度恰好为 5000 个字符", async () => {
+    const vehicles = [{ ...payload.vehicles[0], notes: "备".repeat(5_000) }];
+
+    const response = await POST(request({ ...payload, vehicles }));
+
+    expect(response.status).toBe(200);
+    expect(repository.reenterVehicles).toHaveBeenCalledExactlyOnceWith({ ...payload, vehicles }, { actorId: "user-1", ip: "203.0.113.8" }, scope);
+  });
+
   it.each([
     [401, "UNAUTHENTICATED", "请先登录"],
     [403, "FORBIDDEN", "当前账号没有执行此操作的权限"],
@@ -130,6 +166,8 @@ describe("批量再次入库 API", () => {
     ["缺少原因", { ...payload, reason: undefined }],
     ["空白原因", { ...payload, reason: " \n " }],
     ["原因过长", { ...payload, reason: "a".repeat(2_001) }],
+    ["单车备注过长", { ...payload, vehicles: [{ ...payload.vehicles[0], notes: "备".repeat(5_001) }, payload.vehicles[1]] }],
+    ["备注不是文本", { ...payload, vehicles: [{ ...payload.vehicles[0], notes: 123 }, payload.vehicles[1]] }],
   ])("拒绝%s", async (_label, body) => {
     const response = await POST(request(body));
 

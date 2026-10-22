@@ -84,6 +84,7 @@ export const vehicleReentryInput = z.object({
   vehicles: z.array(z.object({
     id: z.string().trim().min(1).max(128),
     version: z.number().int().positive(),
+    notes: optionalLongText.optional(),
   })).min(1, "请至少选择一辆车").max(500, "每次最多处理 500 辆车"),
   inboundAt: z.iso.date().refine(value => value <= chinaToday(), "再次入库日期不能晚于今天"),
   reason: z.string().trim().min(1, "请填写再次入库原因").max(2_000, "再次入库原因不能超过 2000 个字符"),

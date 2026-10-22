@@ -5,7 +5,7 @@ import { prisma } from "./prisma";
 import { vehicleScalarData } from "./vehicle-persistence";
 import { vehicleStatusCodes, vehicleStatusNames } from "./vehicle-status";
 import type { z } from "zod";
-import { vehiclePayload, type vehicleUpdateInput } from "./validators";
+import { vehiclePayload, type vehicleReentryInput, type vehicleUpdateInput } from "./validators";
 
 export const vehicleInclude = {
   batch: true,
@@ -23,6 +23,7 @@ export const vehicleInclude = {
 export type VehicleWithRelations = Prisma.VehicleGetPayload<{ include: typeof vehicleInclude }>;
 export type VehiclePayload = z.infer<typeof vehiclePayload>;
 type ParsedVehicleUpdate = z.infer<typeof vehicleUpdateInput>;
+type ParsedVehicleReentry = z.infer<typeof vehicleReentryInput>;
 export type VehicleUpdatePayload = VehiclePayload & Partial<Pick<ParsedVehicleUpdate, "status" | "statusReason">>;
 export type MutationContext = { actorId?: string; ip?: string };
 const UNASSIGNED_BATCH_WAREHOUSE_KEY = "__unassigned__";
@@ -567,7 +568,7 @@ export async function updateVehicleFromImport(
 }
 
 export async function reenterVehicles(
-  input: { vehicles: { id: string; version: number }[]; inboundAt: string; reason: string },
+  input: ParsedVehicleReentry,
   context: MutationContext = {},
   scope: Prisma.VehicleWhereInput = {},
 ): Promise<VehicleWithRelations[]> {
@@ -595,9 +596,9 @@ export async function reenterVehicles(
     if (vehicles.length !== ids.length) {
       throw new VehicleReentryError("VEHICLE_NOT_ACCESSIBLE", "部分车辆不存在或不在当前账号的仓库权限范围内", 403);
     }
-    const expected = new Map(input.vehicles.map(vehicle => [vehicle.id, vehicle.version]));
+    const requested = new Map(input.vehicles.map(vehicle => [vehicle.id, vehicle]));
     for (const vehicle of vehicles) {
-      if (vehicle.version !== expected.get(vehicle.id)) throw new VersionConflictError();
+      if (vehicle.version !== requested.get(vehicle.id)?.version) throw new VersionConflictError();
       if (!["OUTBOUND", "PENDING_RECEIPT", "COMPLETED"].includes(vehicle.status)) {
         throw new VehicleReentryError("VEHICLE_NOT_AVAILABLE", `车辆 ${vehicle.vin || vehicle.id} 当前不可再次入库，仅支持已出库、待签收或已完成的车辆`, 409);
       }
@@ -612,6 +613,7 @@ export async function reenterVehicles(
 
     const before = new Map(vehicles.map(vehicle => [vehicle.id, auditSnapshot(toVehicleRecord(vehicle))]));
     for (const vehicle of [...vehicles].sort((left, right) => left.id.localeCompare(right.id))) {
+      const notes = requested.get(vehicle.id)?.notes?.trim();
       const changed = await tx.vehicle.updateMany({
         where: { id: vehicle.id, version: vehicle.version, currentCycle: vehicle.currentCycle ?? 1 },
         data: {
@@ -620,6 +622,7 @@ export async function reenterVehicles(
           outboundAt: null,
           inventoryDays: null,
           pickupDetails: null,
+          ...(notes ? { notes } : {}),
           status: "IN_STOCK",
           version: { increment: 1 },
         },

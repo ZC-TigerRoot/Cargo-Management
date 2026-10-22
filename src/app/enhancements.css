@@ -109,6 +109,7 @@
 .reentry-preview th,.reentry-preview td { padding: 10px 12px; font-size: 11px; }
 .reentry-preview td:last-child { white-space: normal; max-width: 250px; }
 .reentry-preview td small { overflow-wrap: anywhere; }
+.reentry-preview td.reentry-notes { min-width: 150px; max-width: 250px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .reentry-issues { color: #b34338; }
 .reentry-valid { color: #216347; }
 .reentry-remove { display: grid; place-items: center; width: 28px; height: 28px; padding: 0; background: #fff; border: 1px solid var(--line); border-radius: 5px; cursor: pointer; }

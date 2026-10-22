@@ -6,9 +6,20 @@ export type ChangelogEntry = {
 };
 
 /** 产品发布记录（新版本在前） */
-export const APP_VERSION = "0.10.0";
+export const APP_VERSION = "0.10.1";
 
 export const changelog: ChangelogEntry[] = [
+  {
+    version: "0.10.1",
+    date: "2026-10-22",
+    title: "修复再次入库 Excel 备注更新",
+    changes: [
+      "修复再次入库上传 Excel 后备注未更新的问题，非空备注按车架号更新到对应车辆",
+      "备注为空白或没有备注列时保留原备注，避免意外清空",
+      "返库预览新增“本次备注”列，提交前可核对各车将写入的备注",
+      "备注与再次入库在同一事务中保存，修改记录保留备注更新前后的内容",
+    ],
+  },
   {
     version: "0.10.0",
     date: "2026-10-21",

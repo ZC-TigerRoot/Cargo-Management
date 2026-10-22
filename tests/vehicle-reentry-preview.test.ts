@@ -38,7 +38,77 @@ describe("批量再次入库名单预览", () => {
     XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([["车架号"], ["HIDDEN"]]), "隐藏汇总");
     XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([["国内车辆返库名单"], ["车架号", "入库日期", "状态"], [completed.vin, "2000-01-01", "已完成"]]), "国内仓储");
     workbook.Workbook = { Sheets: [{ name: "隐藏汇总", Hidden: 1 }, { name: "国内仓储", Hidden: 0 }] };
-    expect(await readReentryWorkbook(workbookBytes(workbook))).toEqual({ vins: [completed.vin], sheetNames: ["国内仓储"] });
+    expect(await readReentryWorkbook(workbookBytes(workbook))).toEqual({ vins: [completed.vin], notesByVin: new Map(), sheetNames: ["国内仓储"] });
+  });
+
+  it("按规范化车架号保留各车的新备注，预览仍只使用系统中的日期和状态", async () => {
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([
+      ["返库车辆名单"], ["车架号", " 备注 ", "入库日期", "状态"],
+      ["lfv12345678900002", "  第二车新备注\n保留换行  ", "2000-01-01", "异常"],
+      [completed.vin!.toLowerCase(), "第一车新备注", "2000-01-01", "异常"],
+    ]), "返库");
+    const second = { ...completed, id: "v2", vin: "LFV12345678900002", notes: "第二车原备注" };
+
+    const result = await readReentryWorkbook(workbookBytes(workbook));
+    const preview = matchReentryVins(result.vins, [{ ...completed, notes: "第一车原备注" }, second], result.notesByVin);
+
+    expect(result.notesByVin).toEqual(new Map([
+      [second.vin, "第二车新备注\n保留换行"], [completed.vin, "第一车新备注"],
+    ]));
+    expect(preview).toMatchObject([
+      { vin: second.vin, vehicle: { id: "v2", notes: "第二车原备注", status: "已完成" }, notes: "第二车新备注\n保留换行", issue: undefined },
+      { vin: completed.vin, vehicle: { id: "v1", notes: "第一车原备注", status: "已完成" }, notes: "第一车新备注", issue: undefined },
+    ]);
+    expect(preview.every(row => row.vehicle?.inboundAt === undefined)).toBe(true);
+  });
+
+  it("空白备注、没有备注列和隐藏表中的备注均不会覆盖原值", async () => {
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([["VIN", "备注"], [completed.vin, "隐藏备注"]]), "隐藏汇总");
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([["车架号", "备注"], [completed.vin, " \n \t "], ["VIN-2", ""]]), "空白备注");
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([["VIN"], ["VIN-3"]]), "无备注列");
+    workbook.Workbook = { Sheets: [{ name: "隐藏汇总", Hidden: 1 }, { name: "空白备注", Hidden: 0 }, { name: "无备注列", Hidden: 0 }] };
+
+    const result = await readReentryWorkbook(workbookBytes(workbook));
+
+    expect(result.vins).toEqual([completed.vin, "VIN-2", "VIN-3"]);
+    expect(result.notesByVin.size).toBe(0);
+    expect(matchReentryVins(result.vins, [completed], result.notesByVin)[0]).not.toHaveProperty("notes");
+  });
+
+  it("多个可见表分别读取备注，并将数字零备注作为非空文本保留", async () => {
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([["车架号", "备注"], [completed.vin, "已整备"]]), "名单1");
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([["备注", "VIN"], [0, "VIN-2"]]), "名单2");
+
+    const result = await readReentryWorkbook(workbookBytes(workbook));
+
+    expect(result.notesByVin).toEqual(new Map([[completed.vin, "已整备"], ["VIN-2", "0"]]));
+  });
+
+  it("重复车架号即使备注不同也不能通过预览", async () => {
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([["VIN", "备注"], [completed.vin, "备注1"], [completed.vin, "备注2"]]), "名单");
+
+    const result = await readReentryWorkbook(workbookBytes(workbook));
+
+    expect(matchReentryVins(result.vins, [completed], result.notesByVin).every(row => row.issue === "名单中车架号重复")).toBe(true);
+  });
+
+  it("拒绝多个备注列或超过长度限制的备注，允许恰好 5000 个字符", async () => {
+    const duplicate = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(duplicate, XLSX.utils.aoa_to_sheet([["VIN", "备注", "备注"], [completed.vin, "备注1", "备注2"]]), "名单");
+    await expect(readReentryWorkbook(workbookBytes(duplicate))).rejects.toThrow("多个备注列");
+    for (const length of [5_000, 5_001]) {
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([["VIN", "备注"], [completed.vin, "备".repeat(length)]]), "名单");
+      if (length === 5_000) {
+        expect((await readReentryWorkbook(workbookBytes(workbook))).notesByVin.get(completed.vin!)).toHaveLength(length);
+      } else {
+        await expect(readReentryWorkbook(workbookBytes(workbook))).rejects.toThrow("备注不能超过 5000 个字符");
+      }
+    }
   });
 
   it("多个可见表中的重复 VIN 会进入预览校验", async () => {

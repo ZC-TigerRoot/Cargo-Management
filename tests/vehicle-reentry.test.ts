@@ -93,6 +93,46 @@ describe("车辆批量再次入库", () => {
     expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), { isolationLevel: "Serializable", timeout: 30_000 });
   });
 
+  it("按车辆 ID 更新各自的新备注，并在返回记录和审计中保留新旧值", async () => {
+    const existing = [vehicle({ id: "v2", notes: "第二车原备注" }), vehicle({ notes: "第一车原备注" })];
+    const updated = existing.map(item => vehicle({
+      ...item, currentCycle: 2, version: 5, inboundAt: new Date("2026-10-21T00:00:00.000Z"),
+      outboundAt: null, inventoryDays: null, pickupDetails: null, status: "IN_STOCK",
+      notes: item.id === "v1" ? "第一车新备注" : "第二车新备注",
+    }));
+    const tx = transaction(existing, updated);
+    const result = await reenterVehicles({
+      ...input,
+      vehicles: [{ id: "v1", version: 4, notes: "  第一车新备注  " }, { id: "v2", version: 4, notes: "第二车新备注" }],
+    });
+
+    expect(result.map(toVehicleRecord)).toMatchObject([
+      { id: "v1", currentCycle: 2, notes: "第一车新备注" },
+      { id: "v2", currentCycle: 2, notes: "第二车新备注" },
+    ]);
+    expect(tx.vehicle.updateMany).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      where: { id: "v1", version: 4, currentCycle: 1 }, data: expect.objectContaining({ notes: "第一车新备注" }),
+    }));
+    expect(tx.vehicle.updateMany).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      where: { id: "v2", version: 4, currentCycle: 1 }, data: expect.objectContaining({ notes: "第二车新备注" }),
+    }));
+    expect(tx.auditLog.createMany).toHaveBeenCalledWith({ data: expect.arrayContaining([
+      expect.objectContaining({ entityId: "v1", before: expect.objectContaining({ notes: "第一车原备注" }), after: expect.objectContaining({ notes: "第一车新备注" }) }),
+      expect.objectContaining({ entityId: "v2", before: expect.objectContaining({ notes: "第二车原备注" }), after: expect.objectContaining({ notes: "第二车新备注" }) }),
+    ]) });
+  });
+
+  it.each([undefined, "", " \n \t "])("未提供非空新备注（%j）时保留原备注", async notes => {
+    const tx = transaction([vehicle()]);
+    const [result] = await reenterVehicles({ ...input, vehicles: [{ id: "v1", version: 4, ...(notes === undefined ? {} : { notes }) }] });
+
+    expect(toVehicleRecord(result).notes).toBe("原备注");
+    expect(tx.vehicle.updateMany.mock.calls[0][0].data).not.toHaveProperty("notes");
+    expect(tx.auditLog.createMany).toHaveBeenCalledWith({ data: [expect.objectContaining({
+      before: expect.objectContaining({ notes: "原备注" }), after: expect.objectContaining({ notes: "原备注" }),
+    })] });
+  });
+
   it("任意车辆越权或不存在时整批拒绝，未开始写入", async () => {
     const tx = transaction([]);
     await expect(reenterVehicles(input, {}, { warehouseId: { in: [] } })).rejects.toMatchObject({ code: "VEHICLE_NOT_ACCESSIBLE", status: 403 });
@@ -102,8 +142,9 @@ describe("车辆批量再次入库", () => {
 
   it("先校验全部车辆再更新，后面的车辆版本冲突不会提前改动第一台", async () => {
     const tx = transaction([vehicle(), vehicle({ id: "v2", version: 5 })]);
-    await expect(reenterVehicles({ ...input, vehicles: [...input.vehicles, { id: "v2", version: 4 }] })).rejects.toBeInstanceOf(VersionConflictError);
+    await expect(reenterVehicles({ ...input, vehicles: [{ ...input.vehicles[0], notes: "新备注" }, { id: "v2", version: 4, notes: "第二车新备注" }] })).rejects.toBeInstanceOf(VersionConflictError);
     expect(tx.vehicle.updateMany).not.toHaveBeenCalled();
+    expect(tx.auditLog.createMany).not.toHaveBeenCalled();
   });
 
   it.each(["IN_STOCK", "PENDING_INBOUND", "PENDING_PICKUP", "EXCEPTION"])("拒绝将 %s 车辆重复或越级返库", async status => {
@@ -138,7 +179,10 @@ describe("车辆批量再次入库", () => {
   it("写入时并发冲突必须抛错退出事务，不能写成功审计", async () => {
     const tx = transaction([vehicle()]);
     tx.vehicle.updateMany.mockResolvedValueOnce({ count: 0 });
-    await expect(reenterVehicles(input)).rejects.toBeInstanceOf(VersionConflictError);
+    await expect(reenterVehicles({ ...input, vehicles: [{ ...input.vehicles[0], notes: "新备注" }] })).rejects.toBeInstanceOf(VersionConflictError);
+    expect(tx.vehicle.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "v1", version: 4, currentCycle: 1 }, data: expect.objectContaining({ notes: "新备注" }),
+    }));
     expect(tx.inventoryEvent.createMany).not.toHaveBeenCalled();
     expect(tx.auditLog.createMany).not.toHaveBeenCalled();
   });
