@@ -4,6 +4,7 @@ import { CHINA_TIME_ZONE, chinaToday, fromPrismaDate, normalizeCalendarDate, toP
 import { prisma } from "./prisma";
 import { vehicleScalarData } from "./vehicle-persistence";
 import { vehicleStatusCodes, vehicleStatusNames } from "./vehicle-status";
+import { appendReentryNotes, MAX_VEHICLE_NOTES_LENGTH } from "./vehicle-notes";
 import type { z } from "zod";
 import { vehiclePayload, type vehicleReentryInput, type vehicleUpdateInput } from "./validators";
 
@@ -162,6 +163,8 @@ function eventHistory(vehicle: VehicleWithRelations): VehicleEventRecord[] {
         typeof payload.driverLabel === "string" ? { label: "司机名称", value: payload.driverLabel } : undefined,
         typeof payload.driverName === "string" ? { label: "姓名", value: payload.driverName } : undefined,
         typeof payload.driverPhone === "string" ? { label: "联系电话", value: payload.driverPhone } : undefined,
+        payload.source === "reentry" && event.type === "INBOUND" && typeof payload.notes === "string" && payload.notes.trim()
+          ? { label: "本轮备注", value: payload.notes } : undefined,
       ].filter((item): item is { label: string; value: string } => Boolean(item)),
       attachments: event.attachments.map(attachment => ({
         ...attachment,
@@ -596,7 +599,8 @@ export async function reenterVehicles(
     if (vehicles.length !== ids.length) {
       throw new VehicleReentryError("VEHICLE_NOT_ACCESSIBLE", "部分车辆不存在或不在当前账号的仓库权限范围内", 403);
     }
-    const requested = new Map(input.vehicles.map(vehicle => [vehicle.id, vehicle]));
+    const requested = new Map(input.vehicles.map(vehicle => [vehicle.id, { ...vehicle, notes: vehicle.notes?.trim() || undefined }]));
+    const notesToUpdate = new Map<string, string>();
     for (const vehicle of vehicles) {
       if (vehicle.version !== requested.get(vehicle.id)?.version) throw new VersionConflictError();
       if (!["OUTBOUND", "PENDING_RECEIPT", "COMPLETED"].includes(vehicle.status)) {
@@ -609,11 +613,19 @@ export async function reenterVehicles(
       if (previousDates.some(date => fromPrismaDate(date) > input.inboundAt)) {
         throw new VehicleReentryError("INVALID_INBOUND_DATE", `车辆 ${vehicle.vin || vehicle.id} 的再次入库日期不能早于上一轮入库、实际出库或司机签收日期`, 422);
       }
+      const newNotes = requested.get(vehicle.id)?.notes;
+      if (newNotes) {
+        const notes = appendReentryNotes(vehicle.notes, newNotes, (vehicle.currentCycle ?? 1) + 1, input.inboundAt);
+        if (notes && notes.length > MAX_VEHICLE_NOTES_LENGTH) {
+          throw new VehicleReentryError("NOTES_TOO_LONG", `车辆 ${vehicle.vin || vehicle.id} 的累计备注不能超过 ${MAX_VEHICLE_NOTES_LENGTH} 个字符，请先整理备注后重试`, 422);
+        }
+        if (notes) notesToUpdate.set(vehicle.id, notes);
+      }
     }
 
     const before = new Map(vehicles.map(vehicle => [vehicle.id, auditSnapshot(toVehicleRecord(vehicle))]));
     for (const vehicle of [...vehicles].sort((left, right) => left.id.localeCompare(right.id))) {
-      const notes = requested.get(vehicle.id)?.notes?.trim();
+      const notes = notesToUpdate.get(vehicle.id);
       const changed = await tx.vehicle.updateMany({
         where: { id: vehicle.id, version: vehicle.version, currentCycle: vehicle.currentCycle ?? 1 },
         data: {
@@ -630,14 +642,17 @@ export async function reenterVehicles(
       if (changed.count !== 1) throw new VersionConflictError();
     }
     await tx.inventoryEvent.createMany({
-      data: vehicles.map(vehicle => ({
-        vehicleId: vehicle.id,
-        cycle: (vehicle.currentCycle ?? 1) + 1,
-        type: "INBOUND",
-        occurredAt: inboundAt,
-        actorId: context.actorId,
-        payload: { source: "reentry", previousCycle: vehicle.currentCycle ?? 1, reason: input.reason },
-      })),
+      data: vehicles.map(vehicle => {
+        const notes = requested.get(vehicle.id)?.notes;
+        return {
+          vehicleId: vehicle.id,
+          cycle: (vehicle.currentCycle ?? 1) + 1,
+          type: "INBOUND" as const,
+          occurredAt: inboundAt,
+          actorId: context.actorId,
+          payload: { source: "reentry", previousCycle: vehicle.currentCycle ?? 1, reason: input.reason, ...(notes ? { notes } : {}) },
+        };
+      }),
     });
     const updated = await tx.vehicle.findMany({ where: { id: { in: ids } }, include: vehicleInclude });
     await tx.auditLog.createMany({

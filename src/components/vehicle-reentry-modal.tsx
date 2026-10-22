@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Check, FileSpreadsheet, RefreshCw, RotateCcw, Upload, X } from "lucide-react";
 import type { VehicleRecord } from "@/lib/domain";
 import { chinaToday, isCalendarDate } from "@/lib/datetime";
-import { matchReentryVins, MAX_REENTRY_FILE_SIZE, MAX_REENTRY_VEHICLES, parseReentryVins, readReentryWorkbook, reentryDateIssue, reentryStatusIssue, type ReentryPreviewRow } from "@/lib/vehicle-reentry-preview";
+import { matchReentryVins, MAX_REENTRY_FILE_SIZE, MAX_REENTRY_VEHICLES, parseReentryVins, readReentryWorkbook, reentryDateIssue, reentryNotesIssue, reentryStatusIssue, type ReentryPreviewRow } from "@/lib/vehicle-reentry-preview";
 
 type Props = {
   records: VehicleRecord[];
@@ -30,11 +30,11 @@ export default function VehicleReentryModal({ records, selectedIds, onClose, onS
   const busyRef = useRef(false);
   const vins = useMemo(() => parseReentryVins(vinText), [vinText]);
   const preview = useMemo<ReentryPreviewRow[]>(() => {
-    const matched = source === "vins" ? matchReentryVins(vins, snapshot, importedNotes) : selection.map(id => {
+    const matched: ReentryPreviewRow[] = source === "vins" ? matchReentryVins(vins, snapshot, importedNotes) : selection.map(id => {
       const vehicle = snapshot.find(record => record.id === id);
       return { vin: vehicle?.vin || "未填写车架号", vehicle, issue: vehicle ? reentryStatusIssue(vehicle) : "车辆已不存在或当前账号无权查看" };
     });
-    return matched.map(row => ({ ...row, issue: row.issue || (row.vehicle && isCalendarDate(inboundAt) ? reentryDateIssue(row.vehicle, inboundAt) : undefined) }));
+    return matched.map(row => ({ ...row, issue: row.issue || (row.vehicle && isCalendarDate(inboundAt) ? reentryDateIssue(row.vehicle, inboundAt) : undefined) || (row.vehicle ? reentryNotesIssue(row.vehicle, row.notes, inboundAt) : undefined) }));
   }, [importedNotes, inboundAt, selection, snapshot, source, vins]);
   const issueCount = preview.filter(row => row.issue).length;
   const canSubmit = preview.length > 0 && preview.length <= MAX_REENTRY_VEHICLES && !issueCount && isCalendarDate(inboundAt) && inboundAt <= chinaToday() && Boolean(reason.trim()) && !busy && !conflict;
@@ -121,8 +121,8 @@ export default function VehicleReentryModal({ records, selectedIds, onClose, onS
         <div className="form-grid reentry-fields"><label>本次入库日期<input type="date" value={inboundAt} max={chinaToday()} onChange={event => setInboundAt(event.target.value)} required disabled={busy}/></label><label>返库原因<input value={reason} onChange={event => setReason(event.target.value)} maxLength={2000} required disabled={busy}/></label></div>
         <div className="reentry-preview-head"><h3>返库预览 <span>{preview.length} 台</span></h3><span className={issueCount ? "reentry-issues" : "muted"}>{issueCount ? `${issueCount} 条需处理` : preview.length ? "全部可再次入库" : "尚未选择车辆"}</span></div>
         {preview.length > MAX_REENTRY_VEHICLES && <p className="form-error" role="alert">单次最多再次入库 {MAX_REENTRY_VEHICLES} 台车辆</p>}
-        <div className="table-wrap reentry-preview"><table><thead><tr><th>车架号 / 车型</th><th>当前仓库</th><th>当前状态</th><th>新轮次</th><th>本次备注</th><th>核对结果</th>{source === "selected" && <th></th>}</tr></thead><tbody>{preview.map((row, index) => <tr key={`${row.vehicle?.id || row.vin}-${index}`}><td><b>{row.vin}</b><small>{row.vehicle?.model || "—"}</small></td><td>{row.vehicle?.warehouse || "—"}<small>{row.vehicle?.warehouseLocation}</small></td><td>{row.vehicle?.status || "—"}</td><td>{row.vehicle ? `第 ${(row.vehicle.currentCycle ?? 1) + 1} 轮` : "—"}</td><td className="reentry-notes">{row.notes || <span className="muted">保留原备注</span>}</td><td className={row.issue ? "reentry-issues" : "reentry-valid"}>{row.issue || "可再次入库"}</td>{source === "selected" && <td><button type="button" className="reentry-remove" disabled={busy} onClick={() => setSelection(current => current.filter(id => id !== selection[index]))} title="移除此车" aria-label={`移除${row.vin}`}><X /></button></td>}</tr>)}</tbody></table>{!preview.length && <div className="empty">暂无返库车辆</div>}</div>
-        <div className="reentry-summary"><RotateCcw /><p>确认后本轮状态为“在库”，放车、出库、签收及相关日期清空，库存天数从本次入库重新计算。Excel 中非空的“备注”会覆盖对应车辆的原备注，空白或无备注列则保留原值。上一轮出库、签收及附件保留在历史中。</p></div>
+        <div className="table-wrap reentry-preview"><table><thead><tr><th>车架号 / 车型</th><th>当前仓库</th><th>当前状态</th><th>新轮次</th><th>原备注</th><th>本次追加备注</th><th>核对结果</th>{source === "selected" && <th></th>}</tr></thead><tbody>{preview.map((row, index) => <tr key={`${row.vehicle?.id || row.vin}-${index}`}><td><b>{row.vin}</b><small>{row.vehicle?.model || "—"}</small></td><td>{row.vehicle?.warehouse || "—"}<small>{row.vehicle?.warehouseLocation}</small></td><td>{row.vehicle?.status || "—"}</td><td>{row.vehicle ? `第 ${(row.vehicle.currentCycle ?? 1) + 1} 轮` : "—"}</td><td className="reentry-notes">{row.vehicle?.notes || <span className="muted">—</span>}</td><td className="reentry-notes">{row.notes || <span className="muted">无新增，保留原备注</span>}</td><td className={row.issue ? "reentry-issues" : "reentry-valid"}>{row.issue || "可再次入库"}</td>{source === "selected" && <td><button type="button" className="reentry-remove" disabled={busy} onClick={() => setSelection(current => current.filter(id => id !== selection[index]))} title="移除此车" aria-label={`移除${row.vin}`}><X /></button></td>}</tr>)}</tbody></table>{!preview.length && <div className="empty">暂无返库车辆</div>}</div>
+        <div className="reentry-summary"><RotateCcw /><p>确认后本轮状态为“在库”，放车、出库、签收及相关日期清空，库存天数从本次入库重新计算。Excel 中非空的“备注”会追加到原备注后，标注本次入库轮次和日期；原备注完整保留，空白或无备注列时不追加。上一轮出库、签收及附件保留在历史中。</p></div>
         {error && <p className="form-error" role="alert">{error}</p>}
         {conflict && <button type="button" className="secondary-button" onClick={refresh} disabled={busy}><RefreshCw />重新核对车辆</button>}
         <div className="modal-actions"><button type="button" className="secondary-button" onClick={close} disabled={busy}>取消</button><button type="submit" className="primary-button" disabled={!canSubmit}><Check />{busy ? "处理中…" : `确认再次入库（${preview.length}）`}</button></div>

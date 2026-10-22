@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import * as XLSX from "xlsx";
 import type { VehicleRecord } from "../src/lib/domain";
-import { matchReentryVins, parseReentryVins, readReentryWorkbook, reentryDateIssue } from "../src/lib/vehicle-reentry-preview";
+import { matchReentryVins, parseReentryVins, readReentryWorkbook, reentryDateIssue, reentryNotesIssue } from "../src/lib/vehicle-reentry-preview";
+import { appendReentryNotes, MAX_VEHICLE_NOTES_LENGTH } from "../src/lib/vehicle-notes";
 
 const completed: VehicleRecord = { id: "v1", version: 2, updateSequence: "1", vin: "LFV12345678900001", type: "domestic", status: "已完成", currentCycle: 1, warehouse: "上海仓", warehouseTimezone: "Asia/Shanghai", updatedAt: "2026-10-07" };
 
@@ -133,5 +134,13 @@ describe("批量再次入库名单预览", () => {
     const history = [{ id: "signed", type: "DRIVER_SIGNED", cycle: 1, title: "签收", occurredAt: "2026-10-07", recordedAt: "2026-10-07" }];
     expect(reentryDateIssue({ ...completed, history }, "2026-10-06")).toBeDefined();
     expect(reentryDateIssue({ ...completed, currentCycle: 2, history }, "2026-10-06")).toBeUndefined();
+  });
+
+  it("备注预览按实际轮次和日期计算累计长度，超限提示且空白不追加", () => {
+    const headerLength = appendReentryNotes("原", "新", 2, "2026-10-22")!.length - 2;
+    const full = { ...completed, notes: "原".repeat(MAX_VEHICLE_NOTES_LENGTH - headerLength - 1) };
+    expect(reentryNotesIssue(full, "新", "2026-10-22")).toBeUndefined();
+    expect(reentryNotesIssue(full, "新新", "2026-10-22")).toContain("32767");
+    expect(reentryNotesIssue({ ...completed, notes: "原".repeat(MAX_VEHICLE_NOTES_LENGTH) }, " \n ", "2026-10-22")).toBeUndefined();
   });
 });

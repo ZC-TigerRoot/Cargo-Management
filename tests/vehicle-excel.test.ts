@@ -3,12 +3,23 @@ import * as XLSX from "xlsx";
 import { vehicles } from "../src/lib/demo-data";
 import { createVehicleFilters, filterVehicleRecords } from "../src/lib/vehicle-filters";
 import { createVehicleExportWorkbook, domesticExcelHeaders, overseasExcelHeaders } from "../src/lib/vehicle-excel";
+import { appendReentryNotes, MAX_VEHICLE_NOTES_LENGTH } from "../src/lib/vehicle-notes";
 
 function sheetRows(book: XLSX.WorkBook, name: string) {
   return XLSX.utils.sheet_to_json<Record<string, unknown>>(book.Sheets[name], { defval: "" });
 }
 
 describe("车辆明细 Excel 导出", () => {
+  it("完整导出两轮累计备注，超过 5000 字及恰好达到 Excel 单元格上限时均可读回", () => {
+    const notes = appendReentryNotes("原备注".repeat(2_000), "本轮新备注", 2, "2026-10-22")!;
+    for (const value of [notes, "备".repeat(MAX_VEHICLE_NOTES_LENGTH)]) {
+      const book = createVehicleExportWorkbook([{ ...vehicles[0], type: "domestic", notes: value }]);
+      const bytes = XLSX.write(book, { type: "array", bookType: "xlsx" });
+      const restored = XLSX.read(bytes, { type: "array" });
+      expect(sheetRows(restored, "国内仓")[0].备注).toBe(value);
+    }
+  });
+
   it("车型筛选后只导出命中车型的明细和对应业务工作表", () => {
     const filtered = filterVehicleRecords(vehicles, { ...createVehicleFilters(), model: ["宋 PLUS DM-i"] });
     const book = createVehicleExportWorkbook(filtered);

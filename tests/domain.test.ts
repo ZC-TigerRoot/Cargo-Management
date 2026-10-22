@@ -228,7 +228,7 @@ describe("车辆录入校验", () => {
   });
 
   it("拒绝超长业务文本和幂等键", () => {
-    expect(vehicleInput.safeParse({ ...base, notes: "x".repeat(5_001) }).success).toBe(false);
+    expect(vehicleInput.safeParse({ ...base, notes: "x".repeat(32_768) }).success).toBe(false);
     expect(vehicleInput.safeParse({ ...base, idempotencyKey: "x".repeat(129) }).success).toBe(false);
   });
 });

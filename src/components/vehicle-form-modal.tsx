@@ -4,6 +4,7 @@ import { useState } from "react";
 import { X } from "lucide-react";
 import { vehicleStatuses, type BusinessType, type VehicleFormValues, type VehicleRecord, type VehicleStatus } from "@/lib/domain";
 import { CHINA_TIME_ZONE } from "@/lib/datetime";
+import { MAX_VEHICLE_NOTES_LENGTH } from "@/lib/vehicle-notes";
 
 type Props = {
   defaultType?: BusinessType;
@@ -153,7 +154,7 @@ export default function VehicleFormModal({ defaultType = "overseas", initial, on
             <label>出库通知单交付给商社日期<input type="date" name="outboundNoticeDeliveredAt" defaultValue={value("outboundNoticeDeliveredAt")} /></label>
             <label>客户交付签收单日期<input type="date" name="customerReceiptDeliveredAt" defaultValue={value("customerReceiptDeliveredAt")} /></label>
             <label>外代交付签收单给商社日期<input type="date" name="agentReceiptDeliveredAt" defaultValue={value("agentReceiptDeliveredAt")} /></label>
-            <label className="span-2">备注<textarea name="notes" defaultValue={value("notes")} rows={3} /></label>
+            <label className="span-2">备注<textarea name="notes" defaultValue={value("notes")} rows={3} maxLength={MAX_VEHICLE_NOTES_LENGTH} /></label>
           </div>
         </fieldset>
 

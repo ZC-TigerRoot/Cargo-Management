@@ -1,9 +1,12 @@
 import { z } from "zod";
 import { vehicleStatuses } from "./domain";
 import { CHINA_TIME_ZONE, chinaToday } from "./datetime";
+import { MAX_REENTRY_NOTES_LENGTH, MAX_VEHICLE_NOTES_LENGTH } from "./vehicle-notes";
 
 const optionalText = z.string().trim().max(2_000, "文本内容不能超过 2000 个字符").optional().transform(value => value || undefined);
 const optionalLongText = z.string().trim().max(5_000, "文本内容不能超过 5000 个字符").optional().transform(value => value || undefined);
+const optionalNotes = z.string().trim().max(MAX_VEHICLE_NOTES_LENGTH, `备注不能超过 ${MAX_VEHICLE_NOTES_LENGTH} 个字符`).optional().transform(value => value || undefined);
+const optionalReentryNotes = z.string().trim().max(MAX_REENTRY_NOTES_LENGTH, `本次备注不能超过 ${MAX_REENTRY_NOTES_LENGTH} 个字符`).optional().transform(value => value || undefined);
 const optionalVin = z.string().trim().max(100, "车架号不能超过 100 个字符").optional()
   .transform(value => value ? value.toUpperCase() : undefined);
 const optionalDate = z.iso.date().optional();
@@ -58,7 +61,7 @@ export const vehiclePayload = z.object({
   outboundNoticeDeliveredAt: optionalDate,
   customerReceiptDeliveredAt: optionalDate,
   agentReceiptDeliveredAt: optionalDate,
-  notes: optionalLongText,
+  notes: optionalNotes,
 }).superRefine((data, ctx) => {
   if (data.inboundAt && data.outboundAt && data.inboundAt > data.outboundAt) {
     ctx.addIssue({ code: "custom", path: ["outboundAt"], message: "实际出库日期不能早于入库日期" });
@@ -84,7 +87,7 @@ export const vehicleReentryInput = z.object({
   vehicles: z.array(z.object({
     id: z.string().trim().min(1).max(128),
     version: z.number().int().positive(),
-    notes: optionalLongText.optional(),
+    notes: optionalReentryNotes.optional(),
   })).min(1, "请至少选择一辆车").max(500, "每次最多处理 500 辆车"),
   inboundAt: z.iso.date().refine(value => value <= chinaToday(), "再次入库日期不能晚于今天"),
   reason: z.string().trim().min(1, "请填写再次入库原因").max(2_000, "再次入库原因不能超过 2000 个字符"),

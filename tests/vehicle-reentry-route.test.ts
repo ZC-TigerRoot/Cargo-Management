@@ -84,12 +84,16 @@ describe("批量再次入库 API", () => {
     expect(await response.json()).toEqual({ data: [{ id: "vehicle-1", status: "在库" }, { id: "vehicle-2", status: "在库" }], meta: { total: 2 } });
   });
 
-  it("逐车传递去除首尾空白的新备注，并在响应中返回更新后的备注", async () => {
+  it("逐车传递去除首尾空白的新备注，并在响应中返回完整累计备注", async () => {
     const vehicles = [
       { ...payload.vehicles[0], notes: "第一车新备注" },
       { ...payload.vehicles[1], notes: "第二车新备注" },
     ];
-    repository.reenterVehicles.mockResolvedValueOnce(vehicles);
+    const updatedVehicles = [
+      { ...vehicles[0], notes: "第一车原备注\n\n【第 2 轮入库 · 2026-10-21】\n第一车新备注" },
+      { ...vehicles[1], notes: "第二车原备注\n\n【第 3 轮入库 · 2026-10-21】\n第二车新备注" },
+    ];
+    repository.reenterVehicles.mockResolvedValueOnce(updatedVehicles);
 
     const response = await POST(request({
       ...payload, vehicles: [{ ...vehicles[0], notes: "  第一车新备注 \n" }, vehicles[1]],
@@ -97,7 +101,7 @@ describe("批量再次入库 API", () => {
 
     expect(response.status).toBe(200);
     expect(repository.reenterVehicles).toHaveBeenCalledExactlyOnceWith({ ...payload, vehicles }, { actorId: "user-1", ip: "203.0.113.8" }, scope);
-    expect(await response.json()).toEqual({ data: vehicles.map(vehicle => ({ ...vehicle, status: "在库" })), meta: { total: 2 } });
+    expect(await response.json()).toEqual({ data: updatedVehicles.map(vehicle => ({ ...vehicle, status: "在库" })), meta: { total: 2 } });
   });
 
   it("空白备注按未提供处理，已有不带备注的请求仍可提交", async () => {
@@ -209,6 +213,17 @@ describe("批量再次入库 API", () => {
     expect(body).toEqual({ error: "REENTRY_NOT_ALLOWED", message: "所选车辆包含未完成出库的车辆" });
     expect(body).not.toHaveProperty("data");
     expect(repository.reenterVehicles).toHaveBeenCalledOnce();
+  });
+
+  it("累计备注超限时返回 422 且不返回部分成功结果", async () => {
+    repository.reenterVehicles.mockRejectedValueOnce(new repository.VehicleReentryError("NOTES_TOO_LONG", "车辆 VIN-2 的累计备注不能超过 32767 个字符，请先整理备注后重试", 422));
+
+    const response = await POST(request({ ...payload, vehicles: [{ ...payload.vehicles[0], notes: "本轮备注" }, payload.vehicles[1]] }));
+    const body = await response.json();
+
+    expect(response.status).toBe(422);
+    expect(body).toMatchObject({ error: "NOTES_TOO_LONG", message: expect.stringContaining("32767") });
+    expect(body).not.toHaveProperty("data");
   });
 
   it.each([

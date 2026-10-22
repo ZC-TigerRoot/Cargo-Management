@@ -1,4 +1,5 @@
 import type { VehicleRecord } from "./domain";
+import { appendReentryNotes, MAX_REENTRY_NOTES_LENGTH, MAX_VEHICLE_NOTES_LENGTH } from "./vehicle-notes";
 
 export const MAX_REENTRY_VEHICLES = 500;
 export const MAX_REENTRY_FILE_SIZE = 10 * 1024 * 1024;
@@ -24,6 +25,13 @@ export function reentryDateIssue(vehicle: VehicleRecord, inboundAt: string) {
     .filter(event => event.type === "DRIVER_SIGNED" && (event.cycle ?? 1) === (vehicle.currentCycle ?? 1))
     .map(event => event.occurredAt)].filter((date): date is string => Boolean(date));
   return dates.some(date => date > inboundAt) ? "再次入库日期早于上一轮入库、实际出库或司机签收日期" : undefined;
+}
+
+export function reentryNotesIssue(vehicle: VehicleRecord, notes: string | undefined, inboundAt: string) {
+  if (!notes?.trim()) return undefined;
+  const merged = appendReentryNotes(vehicle.notes, notes, (vehicle.currentCycle ?? 1) + 1, inboundAt);
+  return (merged?.length ?? 0) > MAX_VEHICLE_NOTES_LENGTH
+    ? `追加后备注不能超过 ${MAX_VEHICLE_NOTES_LENGTH} 个字符，请先整理备注后重试` : undefined;
 }
 
 export function matchReentryVins(vins: string[], records: VehicleRecord[], notesByVin: ReadonlyMap<string, string> = new Map()): ReentryPreviewRow[] {
@@ -75,7 +83,7 @@ export async function readReentryWorkbook(data: ArrayBuffer): Promise<{ vins: st
       if (!vin || vinHeaders.has(vin)) continue;
       vins.push(vin);
       const notes = notesColumns.length ? String(row[notesColumns[0]] ?? "").trim() : "";
-      if (notes.length > 5_000) throw new Error(`工作表“${name}”中车辆 ${vin} 的备注不能超过 5000 个字符`);
+      if (notes.length > MAX_REENTRY_NOTES_LENGTH) throw new Error(`工作表“${name}”中车辆 ${vin} 的备注不能超过 ${MAX_REENTRY_NOTES_LENGTH} 个字符`);
       if (notes) notesByVin.set(vin, notes);
       if (vins.length > MAX_REENTRY_VEHICLES) throw new Error(`单次最多再次入库 ${MAX_REENTRY_VEHICLES} 台车辆`);
     }
